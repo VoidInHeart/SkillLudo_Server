@@ -64,6 +64,9 @@ export class RoomManager {
   public resetFinishedRoom(room: Room): void {
     room.status = 'WAITING';
     room.game = undefined;
+    // AI seats belong to a single match. The next lobby should show only the
+    // real players who can ready up, then refill empty seats at game start.
+    room.players = room.players.filter((player) => !player.isBot);
     room.players.forEach((player) => { player.ready = false; });
     this.touch(room);
   }

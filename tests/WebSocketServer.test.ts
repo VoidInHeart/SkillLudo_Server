@@ -69,7 +69,10 @@ test('two authenticated players can create, join, ready and start a room', async
     send(a, 'START_GAME', { roomId });
     const started = await expected;
     assert.equal(started.data.roomStatus, 'PLAYING');
-    assert.equal((started.data.pieces as unknown[]).length, 8);
+    assert.equal((started.data.pieces as unknown[]).length, 16);
+    const startedPlayers = started.data.players as Array<{ nickname: string; isBot?: boolean }>;
+    assert.equal(startedPlayers.length, 4);
+    assert.equal(startedPlayers.filter((player) => player.isBot).length, 2);
     assert.equal(started.data.phase, 'WAIT_ROLL');
   } finally {
     a.close();

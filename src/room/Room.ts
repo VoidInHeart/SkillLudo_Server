@@ -6,6 +6,7 @@ export interface Player {
   nickname: string;
   avatarUrl?: string;
   color: PlayerColor;
+  isBot?: boolean;
   ready: boolean;
   connected: boolean;
   lastHeartbeatAt: number;

@@ -14,7 +14,8 @@ export type ClientMessageType =
   | 'AUTH' | 'REGISTER' | 'LOGIN' | 'CREATE_ROOM' | 'JOIN_ROOM' | 'LEAVE_ROOM'
   | 'QUICK_MATCH' | 'CHAT_SEND'
   | 'READY' | 'CANCEL_READY' | 'START_GAME'
-  | 'ROLL_DICE' | 'SELECT_PIECE' | 'PING' | 'RECONNECT';
+  | 'ROLL_DICE' | 'SELECT_PIECE' | 'PING' | 'RECONNECT'
+  | 'CALIBRATION_OPEN' | 'CALIBRATION_SAVE';
 
 export interface ServerMessage<T = unknown> {
   type: ServerMessageType;
@@ -29,7 +30,8 @@ export type ServerMessageType =
   | 'CHAT_MESSAGE' | 'CHAT_HISTORY' | 'SYSTEM_MESSAGE'
   | 'GAME_START' | 'TURN_START' | 'DICE_RESULT' | 'MOVABLE_PIECES'
   | 'MOVE_RESULT' | 'GAME_STATE' | 'PLAYER_DISCONNECTED'
-  | 'PLAYER_RECONNECTED' | 'GAME_OVER' | 'ERROR' | 'PONG';
+  | 'PLAYER_RECONNECTED' | 'GAME_OVER' | 'ERROR' | 'PONG'
+  | 'BOARD_CALIBRATION_DATA' | 'BOARD_CALIBRATION_OPEN' | 'BOARD_CALIBRATION_SAVED';
 
 export enum ErrorCode {
   INVALID_MESSAGE = 'INVALID_MESSAGE',
@@ -52,11 +54,20 @@ export enum ErrorCode {
   INTERNAL_ERROR = 'INTERNAL_ERROR'
 }
 
+export interface BoardPosition { x: number; y: number; }
+export interface BoardCalibrationData {
+  version: number;
+  positions: Record<string, BoardPosition>;
+  completed: string[];
+  sequence: string[];
+}
+
 export interface PlayerPublicState {
   id: string;
   nickname: string;
   avatarUrl?: string;
   color: PlayerColor;
+  isBot?: boolean;
   ready: boolean;
   connected: boolean;
 }

@@ -8,10 +8,11 @@ export const FINISH_PROGRESS = MAIN_PATH_LENGTH + FINAL_PATH_LENGTH - 1;
 export const SAME_COLOR_JUMP_STEPS = 4;
 export const FLIGHT_STEPS = 12;
 
-const startOffset: Record<PlayerColor, number> = {
-  RED: 0,
-  YELLOW: 13,
-  BLUE: 26,
+/** Node 01 is the first outer circle after yellow's takeoff arrow. */
+const clockwiseNodeOffset: Record<PlayerColor, number> = {
+  YELLOW: 0,
+  BLUE: 13,
+  RED: 26,
   GREEN: 39
 };
 
@@ -19,7 +20,10 @@ const startOffset: Record<PlayerColor, number> = {
 export function getBoardCell(color: PlayerColor, progress: number): string | null {
   if (progress < 0) return null;
   if (progress < MAIN_PATH_LENGTH) {
-    return `M${(startOffset[color] + progress) % MAIN_PATH_LENGTH}`;
+    // Progress 0 is the colour-private takeoff arrow. Progress 1 enters the
+    // numbered outer ring and then increases clockwise.
+    if (progress === 0) return `T-${color}`;
+    return `M${(clockwiseNodeOffset[color] + progress - 1) % MAIN_PATH_LENGTH}`;
   }
   if (progress <= FINISH_PROGRESS) return `F-${color}-${progress - FINAL_PATH_START}`;
   return null;
@@ -35,19 +39,7 @@ export function isFlightTrigger(color: PlayerColor, progress: number): boolean {
 }
 
 export function isSameColorMainCell(color: PlayerColor, progress: number): boolean {
-  if (progress < 0 || progress >= MAIN_PATH_LENGTH) return false;
-  const cell = getBoardCell(color, progress);
-  return cell === `M${startOffset[color]}` ||
-    cell === `M${(startOffset[color] + 4) % MAIN_PATH_LENGTH}` ||
-    cell === `M${(startOffset[color] + 8) % MAIN_PATH_LENGTH}` ||
-    cell === `M${(startOffset[color] + 12) % MAIN_PATH_LENGTH}` ||
-    cell === `M${(startOffset[color] + 16) % MAIN_PATH_LENGTH}` ||
-    cell === `M${(startOffset[color] + 20) % MAIN_PATH_LENGTH}` ||
-    cell === `M${(startOffset[color] + 24) % MAIN_PATH_LENGTH}` ||
-    cell === `M${(startOffset[color] + 28) % MAIN_PATH_LENGTH}` ||
-    cell === `M${(startOffset[color] + 32) % MAIN_PATH_LENGTH}` ||
-    cell === `M${(startOffset[color] + 36) % MAIN_PATH_LENGTH}` ||
-    cell === `M${(startOffset[color] + 40) % MAIN_PATH_LENGTH}` ||
-    cell === `M${(startOffset[color] + 44) % MAIN_PATH_LENGTH}` ||
-    cell === `M${(startOffset[color] + 48) % MAIN_PATH_LENGTH}`;
+  // On this board, colour cells recur every four clockwise route steps.
+  // Progress is route-relative, so this stays correct for all four colours.
+  return progress > 0 && progress < MAIN_PATH_LENGTH && progress % 4 === 0;
 }

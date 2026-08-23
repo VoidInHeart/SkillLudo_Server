@@ -6,6 +6,8 @@ export interface Session {
   playerId: string;
   sessionId: string;
   guestId?: string;
+  username?: string;
+  isAdmin: boolean;
   nickname: string;
   roomId?: string;
   processedRequestIds: Set<string>;
@@ -41,6 +43,7 @@ export class SessionManager {
       playerId: `p_${randomUUID()}`,
       sessionId: randomUUID(),
       guestId: data.guestId,
+      isAdmin: false,
       nickname: this.cleanNickname(data.nickname ?? '游客'),
       processedRequestIds: new Set(),
       createdAt: Date.now()
@@ -74,15 +77,19 @@ export class SessionManager {
     return value.trim().slice(0, 20) || '游客';
   }
 
-  private fromPersistedAccount(account: { id: string; nickname: string; sessionId: string }): Session {
+  private fromPersistedAccount(account: { id: string; username: string; nickname: string; sessionId: string }): Session {
     const existing = this.sessions.get(account.sessionId);
     if (existing) {
       existing.nickname = account.nickname;
+      existing.username = account.username;
+      existing.isAdmin = account.username === 'admin';
       return existing;
     }
     const session: Session = {
       playerId: `u_${account.id}`,
       sessionId: account.sessionId,
+      username: account.username,
+      isAdmin: account.username === 'admin',
       nickname: account.nickname,
       processedRequestIds: new Set(),
       createdAt: Date.now()

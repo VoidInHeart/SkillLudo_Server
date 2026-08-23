@@ -1,6 +1,9 @@
 import type { GameSnapshot, GameState, MoveResult, Piece, PlayerColor } from '../protocol.js';
 import type { Room } from '../room/Room.js';
 import { GameRules } from './GameRules.js';
+import { MAIN_PATH_LENGTH, getBoardCell } from './PathData.js';
+
+const GAME_COLORS: PlayerColor[] = ['RED', 'YELLOW', 'BLUE', 'GREEN'];
 
 export class GameError extends Error {
   public constructor(public readonly code: string, message = code) { super(message); }
@@ -10,8 +13,13 @@ export class GameEngine {
   public constructor(private readonly rules = new GameRules(), private readonly random = Math.random) {}
 
   public startGame(room: Room): void {
-    if (room.players.length < 2) throw new GameError('NOT_READY', '至少需要两名玩家');
-    if (!room.players.every((player) => player.ready)) throw new GameError('NOT_READY', '所有玩家必须准备');
+    const humanPlayers = room.players.filter((player) => !player.isBot);
+    if (humanPlayers.length < 2) throw new GameError('NOT_READY', '至少需要两名玩家');
+    if (!humanPlayers.every((player) => player.ready)) throw new GameError('NOT_READY', '所有玩家必须准备');
+    this.fillAiSeats(room);
+    // Colours are finalized only as the game begins, so every participant sees
+    // one unambiguous colour assignment in the GAME_START snapshot.
+    room.players.forEach((player, index) => { player.color = GAME_COLORS[index]; });
     room.status = 'PLAYING';
     room.game = {
       currentPlayerIndex: 0,
@@ -24,11 +32,14 @@ export class GameEngine {
     };
   }
 
-  public rollDice(room: Room, playerId: string): { dice: number; movablePieceIds: string[]; skipped: boolean } {
+  public rollDice(room: Room, playerId: string, forcedDice?: number): { dice: number; movablePieceIds: string[]; skipped: boolean; extraTurn: boolean } {
     const game = this.requireGame(room);
     this.assertCurrentPlayer(room, playerId);
     if (game.phase !== 'WAIT_ROLL') throw new GameError('INVALID_PHASE');
-    const dice = Math.floor(this.random() * 6) + 1;
+    if (forcedDice !== undefined && (!Number.isInteger(forcedDice) || forcedDice < 1 || forcedDice > 6)) {
+      throw new GameError('INVALID_PHASE', '点数必须为 1–6');
+    }
+    const dice = forcedDice ?? Math.floor(this.random() * 6) + 1;
     const movable = this.rules.getMovablePieces(game, playerId, dice);
     game.dice = dice;
     game.movablePieceIds = movable.map((piece) => piece.id);
@@ -36,11 +47,42 @@ export class GameEngine {
       game.dice = null;
       game.phase = 'WAIT_ROLL';
       game.movablePieceIds = [];
-      this.nextTurn(room);
-      return { dice, movablePieceIds: [], skipped: true };
+      // A six earns another roll even when there is no legal plane to move.
+      const extraTurn = dice === 6;
+      if (!extraTurn) this.nextTurn(room);
+      return { dice, movablePieceIds: [], skipped: true, extraTurn };
     }
     game.phase = 'WAIT_SELECT_PIECE';
-    return { dice, movablePieceIds: game.movablePieceIds, skipped: false };
+    return { dice, movablePieceIds: game.movablePieceIds, skipped: false, extraTurn: dice === 6 };
+  }
+
+  /** Chooses a server-side AI move without changing the game state. */
+  public chooseAiPiece(room: Room, playerId: string): string | null {
+    const game = this.requireGame(room);
+    this.assertCurrentPlayer(room, playerId);
+    if (game.phase !== 'WAIT_SELECT_PIECE') return null;
+    const movable = game.pieces.filter((piece) => piece.playerId === playerId && game.movablePieceIds.includes(piece.id));
+    if (movable.length === 0) return null;
+
+    // Launching a new aircraft always comes first when a 5/6 permits it.
+    const takeoff = movable
+      .filter((piece) => piece.state === 'AIRPORT')
+      .sort((left, right) => pieceSequence(left.id) - pieceSequence(right.id) || left.id.localeCompare(right.id))[0];
+    if (takeoff) return takeoff.id;
+
+    // Until every plane has entered its final runway, keep advancing aircraft
+    // still on the shared main route. Within that group, protect threatened
+    // aircraft; the requested tie-breaker prefers the farthest enemy behind.
+    const mainRoute = movable.filter((piece) => piece.state === 'MAIN_PATH' && piece.progress < MAIN_PATH_LENGTH);
+    const candidates = mainRoute.length > 0 ? mainRoute : movable;
+    const threatened = candidates
+      .map((piece) => ({ piece, distance: this.threatDistance(game, piece) }))
+      .filter((candidate): candidate is { piece: Piece; distance: number } => candidate.distance !== null);
+    if (threatened.length > 0) {
+      threatened.sort((left, right) => right.distance - left.distance || right.piece.progress - left.piece.progress || left.piece.id.localeCompare(right.piece.id));
+      return threatened[0].piece.id;
+    }
+    return candidates.sort((left, right) => right.progress - left.progress || left.id.localeCompare(right.id))[0]?.id ?? null;
   }
 
   public selectPiece(room: Room, playerId: string, pieceId: string): MoveResult {
@@ -91,7 +133,7 @@ export class GameEngine {
       roomId: room.roomId,
       roomStatus: room.status,
       ownerId: room.ownerId,
-      players: room.players.map(({ id, nickname, avatarUrl, color, ready, connected }) => ({ id, nickname, avatarUrl, color, ready, connected })),
+      players: room.players.map(({ id, nickname, avatarUrl, color, isBot, ready, connected }) => ({ id, nickname, avatarUrl, color, isBot, ready, connected })),
       currentPlayerId: game ? room.players[game.currentPlayerIndex]?.id ?? null : null,
       phase: game?.phase ?? null,
       dice: game?.dice ?? null,
@@ -110,6 +152,36 @@ export class GameEngine {
       state: 'AIRPORT' as const,
       progress: -1
     }));
+  }
+
+  private fillAiSeats(room: Room): void {
+    for (let seat = room.players.length; seat < GAME_COLORS.length; seat += 1) {
+      room.players.push({
+        id: `ai_${room.roomId}_${seat + 1}`,
+        sessionId: `ai_session_${room.roomId}_${seat + 1}`,
+        nickname: `AI棋手 ${seat + 1}`,
+        color: GAME_COLORS[seat],
+        isBot: true,
+        ready: true,
+        connected: true,
+        lastHeartbeatAt: Date.now()
+      });
+    }
+  }
+
+  /** Returns the forward main-track distance to a hostile aircraft that can roll onto this piece. */
+  private threatDistance(game: GameState, target: Piece): number | null {
+    if (target.state !== 'MAIN_PATH' || target.progress < 0 || target.progress >= MAIN_PATH_LENGTH) return null;
+    const targetCell = getBoardCell(target.color, target.progress);
+    if (!targetCell?.startsWith('M')) return null;
+    const targetIndex = Number(targetCell.slice(1));
+    const distances = game.pieces
+      .filter((piece) => piece.playerId !== target.playerId && piece.state === 'MAIN_PATH' && piece.progress >= 0 && piece.progress < MAIN_PATH_LENGTH)
+      .map((piece) => getBoardCell(piece.color, piece.progress))
+      .filter((cell): cell is string => !!cell && cell.startsWith('M'))
+      .map((cell) => (targetIndex - Number(cell.slice(1)) + MAIN_PATH_LENGTH) % MAIN_PATH_LENGTH)
+      .filter((distance) => distance >= 1 && distance <= 6);
+    return distances.length > 0 ? Math.max(...distances) : null;
   }
 
   private nextTurn(room: Room): void {
@@ -134,4 +206,9 @@ export class GameEngine {
     const game = this.requireGame(room);
     if (room.players[game.currentPlayerIndex]?.id !== playerId) throw new GameError('NOT_YOUR_TURN');
   }
+}
+
+function pieceSequence(id: string): number {
+  const matched = /-(\d+)$/.exec(id);
+  return matched ? Number.parseInt(matched[1], 10) : Number.MAX_SAFE_INTEGER;
 }
