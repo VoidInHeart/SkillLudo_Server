@@ -17,8 +17,8 @@ interface ConnectionContext {
 }
 
 const HEARTBEAT_TIMEOUT_MS = 45_000;
-const AUTO_PLAY_DELAY_MS = 30_000;
 const AI_THINK_DELAY_MS = 700;
+const ABANDONED_ROOM_GRACE_MS = 45_000;
 const ROOM_IDLE_TIMEOUT_MS = 4 * 60 * 60_000;
 
 export class GameWebSocketServer {
@@ -30,6 +30,7 @@ export class GameWebSocketServer {
   private readonly connections = new ConnectionManager();
   private readonly maintenanceTimer: NodeJS.Timeout;
   private readonly aiTimers = new Map<string, NodeJS.Timeout>();
+  private closing = false;
   // The client-side code merely exposes this local tooling. The server remains
   // authoritative and refuses forced rolls in a production deployment.
   private readonly allowDebugDice = process.env.NODE_ENV !== 'production' && process.env.SKILLLUDO_ALLOW_DEBUG_DICE !== 'false';
@@ -52,6 +53,7 @@ export class GameWebSocketServer {
   }
 
   public async close(): Promise<void> {
+    this.closing = true;
     clearInterval(this.maintenanceTimer);
     this.aiTimers.forEach((timer) => clearTimeout(timer));
     this.aiTimers.clear();
@@ -115,23 +117,16 @@ export class GameWebSocketServer {
   private completeAuthentication(socket: WebSocket, context: ConnectionContext, session: Session, requestId: string): void {
     context.session = session;
     this.connections.bind(session.playerId, socket);
-    const room = session.roomId ? this.rooms.getRoom(session.roomId) : undefined;
-    if (room) {
-      const player = room.players.find((candidate) => candidate.id === session.playerId);
-      if (player) {
-        player.connected = true;
-        player.lastHeartbeatAt = Date.now();
-        player.disconnectedAt = undefined;
-        player.nickname = session.nickname;
-        this.broadcast(room, 'PLAYER_RECONNECTED', { playerId: player.id });
-      }
-    }
-    this.send(socket, 'AUTH_OK', { playerId: session.playerId, sessionId: session.sessionId, nickname: session.nickname, isAdmin: session.isAdmin }, requestId);
+    const room = (session.roomId ? this.rooms.getRoom(session.roomId) : undefined) ?? this.rooms.findActiveRoomByPlayer(session.playerId);
+    session.roomId = room?.roomId;
+    this.send(socket, 'AUTH_OK', {
+      playerId: session.playerId,
+      sessionId: session.sessionId,
+      nickname: session.nickname,
+      isAdmin: session.isAdmin,
+      activeGames: this.activeGamesFor(session.playerId)
+    }, requestId);
     this.send(socket, 'BOARD_CALIBRATION_DATA', this.calibration.getData());
-    if (room) {
-      this.send(socket, 'GAME_STATE', this.game.getSnapshot(room));
-      this.sendChatHistory(socket, room);
-    }
   }
 
   private handleAuthenticated(socket: WebSocket, session: Session, message: ClientMessage): void {
@@ -161,6 +156,9 @@ export class GameWebSocketServer {
       case 'RECONNECT': this.reconnect(socket, session, roomId, message.requestId); break;
       case 'CALIBRATION_OPEN': this.openCalibration(socket, session, message.data, message.requestId); break;
       case 'CALIBRATION_SAVE': this.saveCalibration(socket, session, message.data, message.requestId); break;
+      case 'SET_AI_TAKEOVER': this.setAiTakeover(session, roomId, message.data, message.requestId); break;
+      case 'EXIT_GAME': this.exitGame(socket, session, roomId, message.requestId); break;
+      case 'REJOIN_GAME': this.reconnect(socket, session, roomId, message.requestId); break;
       default: throw new GameError('INVALID_MESSAGE');
     }
   }
@@ -271,6 +269,7 @@ export class GameWebSocketServer {
   private rollDice(session: Session, roomId: string, data: unknown, requestId: string): void {
     this.assertSessionRoom(session, roomId);
     const room = this.rooms.requireRoom(roomId);
+    this.assertManualControl(room, session.playerId);
     const debugDice = this.debugDiceFrom(data);
     if (debugDice !== undefined && !this.allowDebugDice) throw new GameError('INVALID_MESSAGE', '当前服务未开启调试点数');
     const result = this.game.rollDice(room, session.playerId, debugDice);
@@ -285,16 +284,14 @@ export class GameWebSocketServer {
   private selectPiece(session: Session, roomId: string, pieceId: string, requestId: string): void {
     this.assertSessionRoom(session, roomId);
     const room = this.rooms.requireRoom(roomId);
+    this.assertManualControl(room, session.playerId);
     const result = this.game.selectPiece(room, session.playerId, pieceId);
     this.broadcast(room, 'MOVE_RESULT', result, requestId);
     const finalSnapshot = this.game.getSnapshot(room);
     if (room.status === 'FINISHED') {
       this.broadcast(room, 'GAME_OVER', finalSnapshot);
       setTimeout(() => {
-        if (room.status === 'FINISHED') {
-          this.rooms.resetFinishedRoom(room);
-          this.broadcastState(room);
-        }
+        if (room.status === 'FINISHED') this.resetFinishedRoom(room);
       }, 6_000);
     } else {
       this.broadcastState(room);
@@ -320,13 +317,53 @@ export class GameWebSocketServer {
     const room = this.rooms.requireRoom(roomId);
     const player = room.players.find((candidate) => candidate.id === session.playerId);
     if (!player) throw new GameError('NOT_IN_ROOM');
+    const wasControlled = player.aiControlled === true;
     player.connected = true;
+    player.aiControlled = false;
     player.lastHeartbeatAt = Date.now();
     player.disconnectedAt = undefined;
+    player.exitedAt = undefined;
+    player.nickname = session.nickname;
     this.connections.bind(session.playerId, socket);
     this.send(socket, 'GAME_STATE', this.game.getSnapshot(room), requestId);
     this.sendChatHistory(socket, room);
     this.broadcast(room, 'PLAYER_RECONNECTED', { playerId: player.id });
+    if (wasControlled) this.broadcastSystem(room, `${player.nickname} 已重连入局，AI托管结束`);
+    this.broadcastState(room);
+    this.send(socket, 'ACTIVE_GAMES', { games: this.activeGamesFor(session.playerId) });
+  }
+
+  private setAiTakeover(session: Session, roomId: string, data: unknown, requestId: string): void {
+    this.assertSessionRoom(session, roomId);
+    const room = this.rooms.requireRoom(roomId);
+    if (room.status !== 'PLAYING') throw new GameError('INVALID_PHASE', '仅对局中可使用AI托管');
+    const player = room.players.find((candidate) => candidate.id === session.playerId && !candidate.isBot);
+    if (!player) throw new GameError('NOT_IN_ROOM');
+    const enabled = isRecord(data) && data.enabled === true;
+    if (player.aiControlled === enabled) return;
+    player.aiControlled = enabled;
+    this.broadcast(room, 'AI_TAKEOVER_CHANGED', { playerId: player.id, enabled }, requestId);
+    this.broadcastSystem(room, `${player.nickname}${enabled ? ' 已开启AI托管' : ' 已取消AI托管'}`);
+    this.broadcastState(room);
+    if (enabled) this.scheduleAiTurn(room);
+  }
+
+  private exitGame(socket: WebSocket, session: Session, roomId: string, requestId: string): void {
+    this.assertSessionRoom(session, roomId);
+    const room = this.rooms.requireRoom(roomId);
+    if (room.status !== 'PLAYING') throw new GameError('INVALID_PHASE', '当前没有进行中的对局');
+    const player = room.players.find((candidate) => candidate.id === session.playerId && !candidate.isBot);
+    if (!player) throw new GameError('NOT_IN_ROOM');
+    player.connected = false;
+    player.aiControlled = true;
+    player.disconnectedAt = Date.now();
+    player.exitedAt = Date.now();
+    this.broadcastSystem(room, `${player.nickname} 已退出对局，由AI托管`);
+    this.broadcastState(room);
+    this.send(socket, 'GAME_EXITED', { roomId }, requestId);
+    this.send(socket, 'ACTIVE_GAMES', { games: this.activeGamesFor(session.playerId) });
+    this.scheduleAiTurn(room);
+    this.finishIfNoHumans(room, true);
   }
 
   private openCalibration(socket: WebSocket, session: Session, data: unknown, requestId: string): void {
@@ -369,9 +406,11 @@ export class GameWebSocketServer {
     const room = session.roomId ? this.rooms.getRoom(session.roomId) : undefined;
     const player = room?.players.find((candidate) => candidate.id === session.playerId);
     if (room && player) {
-      this.markDisconnected(player);
+      const newlyControlled = this.markDisconnected(player);
       this.broadcast(room, 'PLAYER_DISCONNECTED', { playerId: player.id });
+      if (newlyControlled) this.broadcastSystem(room, `${player.nickname} 已断线，由AI托管`);
       this.broadcastState(room);
+      this.scheduleAiTurn(room);
       this.log('DISCONNECT', room, session);
     }
   }
@@ -382,11 +421,13 @@ export class GameWebSocketServer {
       for (const player of room.players) {
         if (player.isBot) continue;
         if (player.connected && now - player.lastHeartbeatAt > HEARTBEAT_TIMEOUT_MS) {
-          this.markDisconnected(player);
+          const newlyControlled = this.markDisconnected(player);
           this.broadcast(room, 'PLAYER_DISCONNECTED', { playerId: player.id });
+          if (newlyControlled) this.broadcastSystem(room, `${player.nickname} 已断线，由AI托管`);
+          this.scheduleAiTurn(room);
         }
       }
-      this.autoPlayDisconnectedTurn(room, now);
+      this.finishIfNoHumans(room, false, now);
       if (room.status !== 'PLAYING' && now - room.lastActiveAt > ROOM_IDLE_TIMEOUT_MS) {
         this.rooms.destroyRoom(room.roomId);
         console.info('[ROOM_DESTROY]', room.roomId, 'idle');
@@ -421,6 +462,9 @@ export class GameWebSocketServer {
   private ensureNotInAnotherRoom(session: Session): void { if (session.roomId) throw new GameError('NOT_IN_ROOM', '请先离开当前房间'); }
   private assertSessionRoom(session: Session, roomId: string): void { if (!roomId || session.roomId !== roomId) throw new GameError('NOT_IN_ROOM'); }
   private assertAdmin(session: Session): void { if (!session.isAdmin) throw new GameError('UNAUTHORIZED', '仅 admin 账号可使用棋盘校准'); }
+  private assertManualControl(room: Room, playerId: string): void {
+    if (room.players.find((player) => player.id === playerId)?.aiControlled) throw new GameError('INVALID_PHASE', '当前由AI托管，请先取消托管');
+  }
   private roomIdFrom(data: unknown): string { return isRecord(data) && typeof data.roomId === 'string' ? data.roomId.trim() : ''; }
   private pieceIdFrom(data: unknown): string { return isRecord(data) && typeof data.pieceId === 'string' ? data.pieceId : ''; }
   private chatContentFrom(data: unknown): string {
@@ -463,42 +507,13 @@ export class GameWebSocketServer {
     console.info(`[${event}] room=${room.roomId} player=${session.playerId} turn=${room.game?.turnNumber ?? 0} request=${requestId ?? '-'} ${detail ?? ''}`);
   }
 
-  /** A disconnected current player is advanced by a deliberately simple server-side trustee. */
-  private autoPlayDisconnectedTurn(room: Room, now: number): void {
-    if (room.status !== 'PLAYING' || !room.game || room.game.phase !== 'WAIT_ROLL') return;
-    const player = room.players[room.game.currentPlayerIndex];
-    if (!player || player.connected || !player.disconnectedAt || now - player.disconnectedAt < AUTO_PLAY_DELAY_MS) return;
-    try {
-      const diceResult = this.game.rollDice(room, player.id);
-      this.broadcast(room, 'DICE_RESULT', { playerId: player.id, ...diceResult, trustee: true });
-      if (!diceResult.skipped && diceResult.movablePieceIds[0]) {
-        const move = this.game.selectPiece(room, player.id, diceResult.movablePieceIds[0]);
-        this.broadcast(room, 'MOVE_RESULT', { ...move, trustee: true });
-      }
-      const snapshot = this.game.getSnapshot(room);
-      if (snapshot.roomStatus === 'FINISHED') {
-        this.broadcast(room, 'GAME_OVER', snapshot);
-        setTimeout(() => {
-          if (room.status === 'FINISHED') {
-            this.rooms.resetFinishedRoom(room);
-            this.broadcastState(room);
-          }
-        }, 6_000);
-      } else {
-        this.broadcastState(room);
-        this.broadcast(room, 'TURN_START', this.turnData(this.game.getSnapshot(room)));
-      }
-      console.info(`[AUTO_PLAY] room=${room.roomId} player=${player.id}`);
-    } catch (error) {
-      console.warn('[AUTO_PLAY_ERROR]', room.roomId, error);
-    }
-  }
-
-  /** AI seats are server-owned players: roll, choose one authorised plane, then broadcast the same events as a human move. */
+  /** AI seats and human trustee seats share one authoritative turn runner. */
   private scheduleAiTurn(room: Room): void {
+    if (this.closing) return;
     const game = room.game;
     const player = game ? room.players[game.currentPlayerIndex] : undefined;
-    if (room.status !== 'PLAYING' || !game || game.phase !== 'WAIT_ROLL' || !player?.isBot || this.aiTimers.has(room.roomId)) return;
+    if (room.status !== 'PLAYING' || !game || !['WAIT_ROLL', 'WAIT_SELECT_PIECE'].includes(game.phase)
+      || !player || (!player.isBot && !player.aiControlled) || this.aiTimers.has(room.roomId)) return;
     const timer = setTimeout(() => {
       this.aiTimers.delete(room.roomId);
       this.playAiTurn(room);
@@ -507,17 +522,23 @@ export class GameWebSocketServer {
   }
 
   private playAiTurn(room: Room): void {
+    if (this.closing) return;
     const game = room.game;
     const player = game ? room.players[game.currentPlayerIndex] : undefined;
-    if (room.status !== 'PLAYING' || !game || game.phase !== 'WAIT_ROLL' || !player?.isBot) return;
+    if (room.status !== 'PLAYING' || !game || !player || (!player.isBot && !player.aiControlled)
+      || !['WAIT_ROLL', 'WAIT_SELECT_PIECE'].includes(game.phase)) return;
     try {
-      const diceResult = this.game.rollDice(room, player.id);
-      this.broadcast(room, 'DICE_RESULT', { playerId: player.id, ...diceResult, ai: true });
-      if (!diceResult.skipped) {
+      let rolledDice: number | undefined;
+      if (game.phase === 'WAIT_ROLL') {
+        const diceResult = this.game.rollDice(room, player.id);
+        rolledDice = diceResult.dice;
+        this.broadcast(room, 'DICE_RESULT', { playerId: player.id, ...diceResult, ai: true, trustee: !player.isBot });
+      }
+      if (game.phase === 'WAIT_SELECT_PIECE') {
         const pieceId = this.game.chooseAiPiece(room, player.id);
         if (pieceId) {
           const move = this.game.selectPiece(room, player.id, pieceId);
-          this.broadcast(room, 'MOVE_RESULT', { ...move, ai: true });
+          this.broadcast(room, 'MOVE_RESULT', { ...move, ai: true, trustee: !player.isBot });
         }
       }
 
@@ -525,25 +546,64 @@ export class GameWebSocketServer {
       if (this.isFinishedRoom(room)) {
         this.broadcast(room, 'GAME_OVER', snapshot);
         setTimeout(() => {
-          if (room.status === 'FINISHED') {
-            this.rooms.resetFinishedRoom(room);
-            this.broadcastState(room);
-          }
+          if (room.status === 'FINISHED') this.resetFinishedRoom(room);
         }, 6_000);
         return;
       }
       this.broadcastState(room);
       this.broadcast(room, 'TURN_START', this.turnData(snapshot));
       this.scheduleAiTurn(room);
-      console.info(`[AI_PLAY] room=${room.roomId} player=${player.id} dice=${diceResult.dice}`);
+      console.info(`[AI_PLAY] room=${room.roomId} player=${player.id} dice=${rolledDice ?? game.dice ?? '-'}`);
     } catch (error) {
       console.warn('[AI_PLAY_ERROR]', room.roomId, error);
     }
   }
 
-  private markDisconnected(player: Player): void {
+  private markDisconnected(player: Player): boolean {
+    const newlyControlled = player.aiControlled !== true;
     player.connected = false;
+    player.aiControlled = true;
     player.disconnectedAt ??= Date.now();
+    return newlyControlled;
+  }
+
+  private activeGamesFor(playerId: string): object[] {
+    const room = this.rooms.findActiveRoomByPlayer(playerId);
+    if (!room) return [];
+    const player = room.players.find((candidate) => candidate.id === playerId);
+    if (!player) return [];
+    return [{ roomId: room.roomId, color: player.color, turnNumber: room.game?.turnNumber ?? 0, playerCount: room.players.length, status: room.status }];
+  }
+
+  private finishIfNoHumans(room: Room, immediate: boolean, now = Date.now()): void {
+    if (room.status !== 'PLAYING') return;
+    const humans = room.players.filter((player) => !player.isBot);
+    if (humans.some((player) => player.connected)) return;
+    if (!immediate && humans.some((player) => !player.disconnectedAt || now - player.disconnectedAt < ABANDONED_ROOM_GRACE_MS)) return;
+    const timer = this.aiTimers.get(room.roomId);
+    if (timer) clearTimeout(timer);
+    this.aiTimers.delete(room.roomId);
+    if (room.game) {
+      room.game.phase = 'GAME_OVER';
+      room.game.dice = null;
+      room.game.movablePieceIds = [];
+    }
+    room.status = 'FINISHED';
+    this.broadcastSystem(room, '房间中已无真人玩家，本场对局自动结束');
+    this.broadcast(room, 'GAME_OVER', this.game.getSnapshot(room));
+    this.sessions.clearRoomForPlayers(humans.map((player) => player.id), room.roomId);
+    humans.forEach((player) => this.connections.send(player.id, this.message('ACTIVE_GAMES', { games: [] })));
+    const cleanup = setTimeout(() => this.rooms.destroyRoom(room.roomId), 2_000);
+    cleanup.unref();
+  }
+
+  private resetFinishedRoom(room: Room): void {
+    const previousHumanIds = room.players.filter((player) => !player.isBot).map((player) => player.id);
+    this.rooms.resetFinishedRoom(room);
+    const retainedIds = new Set(room.players.map((player) => player.id));
+    this.sessions.clearRoomForPlayers(previousHumanIds.filter((id) => !retainedIds.has(id)), room.roomId);
+    if (room.players.length === 0) this.rooms.destroyRoom(room.roomId);
+    else this.broadcastState(room);
   }
 
   /** Keeps the status check out of a narrowed AI-turn branch after a move. */

@@ -120,3 +120,65 @@ test('quick match pairs clients and broadcasts room chat', async () => {
     await server.close();
   }
 });
+
+test('exiting a live game enables trustee mode and the same account can rejoin', async () => {
+  const server = new GameWebSocketServer(0);
+  await server.ready;
+  const url = `ws://127.0.0.1:${server.port}`;
+  const a = new WebSocket(url);
+  const b = new WebSocket(url);
+  try {
+    await Promise.all([once(a, 'open'), once(b, 'open')]);
+    let expected = waitForMessage(a, 'AUTH_OK');
+    send(a, 'AUTH', { guestId: 'resume-a', nickname: '甲' }, 'resume-auth-a');
+    const authA = await expected;
+    const playerA = authA.data.playerId as string;
+    expected = waitForMessage(b, 'AUTH_OK');
+    send(b, 'AUTH', { guestId: 'resume-b', nickname: '乙' }, 'resume-auth-b');
+    await expected;
+
+    expected = waitForMessage(a, 'ROOM_CREATED');
+    send(a, 'CREATE_ROOM', {}, 'resume-create');
+    const roomId = (await expected).data.roomId as string;
+    expected = waitForMessage(b, 'GAME_STATE');
+    send(b, 'JOIN_ROOM', { roomId }, 'resume-join');
+    await expected;
+    expected = waitForMessage(a, 'GAME_STATE');
+    send(a, 'READY', { roomId }, 'resume-ready-a');
+    await expected;
+    expected = waitForMessage(a, 'GAME_STATE');
+    send(b, 'READY', { roomId }, 'resume-ready-b');
+    await expected;
+    expected = waitForMessage(a, 'GAME_START');
+    send(a, 'START_GAME', { roomId }, 'resume-start');
+    await expected;
+
+    const exitedMessage = waitForMessage(a, 'GAME_EXITED');
+    const activeMessage = waitForMessage(a, 'ACTIVE_GAMES');
+    send(a, 'EXIT_GAME', { roomId }, 'resume-exit');
+    assert.equal((await exitedMessage).data.roomId, roomId);
+    const activeGames = (await activeMessage).data.games as Array<{ roomId: string }>;
+    assert.equal(activeGames[0]?.roomId, roomId);
+
+    expected = waitForMessage(a, 'GAME_STATE');
+    send(a, 'REJOIN_GAME', { roomId }, 'resume-rejoin');
+    const resumed = await expected;
+    const player = (resumed.data.players as Array<{ id: string; connected: boolean; aiControlled?: boolean }>).find((candidate) => candidate.id === playerA);
+    assert.equal(player?.connected, true);
+    assert.equal(player?.aiControlled, false);
+
+    expected = waitForMessage(a, 'GAME_EXITED');
+    send(a, 'EXIT_GAME', { roomId }, 'resume-exit-again');
+    await expected;
+    const gameOver = waitForMessage(a, 'GAME_OVER');
+    expected = waitForMessage(b, 'GAME_EXITED');
+    send(b, 'EXIT_GAME', { roomId }, 'resume-exit-b');
+    await expected;
+    assert.equal((await gameOver).data.roomStatus, 'FINISHED');
+  } finally {
+    a.close();
+    b.close();
+    await Promise.all([once(a, 'close'), once(b, 'close')]);
+    await server.close();
+  }
+});

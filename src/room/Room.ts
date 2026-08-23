@@ -7,10 +7,12 @@ export interface Player {
   avatarUrl?: string;
   color: PlayerColor;
   isBot?: boolean;
+  aiControlled?: boolean;
   ready: boolean;
   connected: boolean;
   lastHeartbeatAt: number;
   disconnectedAt?: number;
+  exitedAt?: number;
 }
 
 export interface Room {

@@ -66,8 +66,9 @@ export class RoomManager {
     room.game = undefined;
     // AI seats belong to a single match. The next lobby should show only the
     // real players who can ready up, then refill empty seats at game start.
-    room.players = room.players.filter((player) => !player.isBot);
+    room.players = room.players.filter((player) => !player.isBot && player.connected && !player.aiControlled);
     room.players.forEach((player) => { player.ready = false; });
+    if (!room.players.some((player) => player.id === room.ownerId) && room.players[0]) room.ownerId = room.players[0].id;
     this.touch(room);
   }
 
@@ -84,6 +85,9 @@ export class RoomManager {
   }
 
   public getRoom(roomId: string): Room | undefined { return this.rooms.get(roomId); }
+  public findActiveRoomByPlayer(playerId: string): Room | undefined {
+    return [...this.rooms.values()].find((room) => room.status === 'PLAYING' && room.players.some((player) => player.id === playerId && !player.isBot));
+  }
   public getRooms(): Iterable<Room> { return this.rooms.values(); }
   public destroyRoom(roomId: string): void { this.rooms.delete(roomId); }
   public requireRoom(roomId: string): Room {

@@ -72,6 +72,10 @@ export class SessionManager {
   }
 
   public get(sessionId: string): Session | undefined { return this.sessions.get(sessionId); }
+  public clearRoomForPlayers(playerIds: Iterable<string>, roomId: string): void {
+    const ids = new Set(playerIds);
+    this.sessions.forEach((session) => { if (ids.has(session.playerId) && session.roomId === roomId) session.roomId = undefined; });
+  }
 
   private cleanNickname(value: string): string {
     return value.trim().slice(0, 20) || '游客';

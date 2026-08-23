@@ -133,7 +133,7 @@ export class GameEngine {
       roomId: room.roomId,
       roomStatus: room.status,
       ownerId: room.ownerId,
-      players: room.players.map(({ id, nickname, avatarUrl, color, isBot, ready, connected }) => ({ id, nickname, avatarUrl, color, isBot, ready, connected })),
+      players: room.players.map(({ id, nickname, avatarUrl, color, isBot, aiControlled, ready, connected }) => ({ id, nickname, avatarUrl, color, isBot, aiControlled, ready, connected })),
       currentPlayerId: game ? room.players[game.currentPlayerIndex]?.id ?? null : null,
       phase: game?.phase ?? null,
       dice: game?.dice ?? null,
