@@ -68,8 +68,9 @@ export class GameEngine {
     game.dice = null;
     game.movablePieceIds = [];
 
-    if (game.rankings.length >= room.players.length - 1) {
-      for (const player of room.players) if (!game.rankings.includes(player.id)) game.rankings.push(player.id);
+    // A complete squad wins immediately. The finished planes are rendered back
+    // in their own airport with a distinct completion icon on the client.
+    if (result.playerFinished) {
       game.phase = 'GAME_OVER';
       room.status = 'FINISHED';
       return result;

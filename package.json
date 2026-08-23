@@ -5,12 +5,12 @@
   "description": "Authoritative WebSocket server for the SkillLudo four-player game.",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "start": "node --env-file-if-exists=.env dist/index.js",
     "test": "tsx --test tests/**/*.test.ts",
     "check": "tsc --noEmit -p tsconfig.json",
-    "db:bootstrap": "node scripts/bootstrap-database.mjs"
+    "db:bootstrap": "node --env-file-if-exists=.env scripts/bootstrap-database.mjs"
   },
   "dependencies": {
     "mysql2": "^3.23.4",
