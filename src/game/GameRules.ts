@@ -1,6 +1,6 @@
 import type { GameState, MoveResult, MoveSegment, Piece } from '../protocol.js';
 import {
-  FINAL_PATH_START, FINISH_PROGRESS, FLIGHT_STEPS, MAIN_PATH_LENGTH,
+  FINAL_PATH_START, FINISH_PROGRESS, FLIGHT_STEPS,
   SAME_COLOR_JUMP_STEPS, getBoardCell, isFlightTrigger, isSameColorMainCell
 } from './PathData.js';
 

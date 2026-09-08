@@ -159,7 +159,13 @@ export class GameWebSocketServer {
       case 'ROLL_DICE': this.rollDice(session, roomId, message.data, message.requestId); break;
       case 'SELECT_DIE': this.selectDie(session, roomId, message.data, message.requestId); break;
       case 'USE_SKILL': throw new GameError('SKILL_UNAVAILABLE', '本局尚未启用阵营技能');
-      case 'SELECT_PIECE': this.selectPiece(session, roomId, this.pieceIdFrom(message.data), message.requestId); break;
+      case 'SELECT_PIECE': {
+        this.assertSessionRoom(session, roomId);
+        const room = this.rooms.requireRoom(roomId);
+        if (!isRecord(message.data) || message.data.rollId !== room.game?.rollId) throw new GameError('INVALID_DIE', '移动操作已过期');
+        this.selectPiece(session, roomId, this.pieceIdFrom(message.data), message.requestId);
+        break;
+      }
       case 'PING': this.ping(socket, session, roomId, message.requestId); break;
       case 'RECONNECT': this.reconnect(socket, session, roomId, message.requestId); break;
       case 'CALIBRATION_OPEN': this.openCalibration(socket, session, message.data, message.requestId); break;
@@ -202,26 +208,6 @@ export class GameWebSocketServer {
       this.broadcastState(room);
       this.log('ROOM_LEAVE', room, session);
     }
-  }
-
-  private quickMatch(socket: WebSocket, session: Session, requestId: string): void {
-    this.ensureNotInAnotherRoom(session);
-    const target = this.rooms.findMatchRoom();
-    if (!target) {
-      const room = this.rooms.createRoom(this.asPlayer(session));
-      session.roomId = room.roomId;
-      this.send(socket, 'ROOM_CREATED', this.game.getSnapshot(room), requestId);
-      this.broadcastSystem(room, `${session.nickname} 创建了快速匹配房间`);
-      this.log('QUICK_MATCH_CREATE', room, session, requestId);
-      return;
-    }
-    const room = this.rooms.joinRoom(target.roomId, this.asPlayer(session));
-    session.roomId = room.roomId;
-    this.broadcast(room, 'PLAYER_JOINED', { playerId: session.playerId });
-    this.broadcastSystem(room, `${session.nickname} 通过快速匹配加入房间`);
-    this.broadcastState(room, requestId);
-    this.sendChatHistory(socket, room);
-    this.log('QUICK_MATCH_JOIN', room, session, requestId);
   }
 
   private sendChat(socket: WebSocket, session: Session, roomId: string, data: unknown, requestId: string): void {

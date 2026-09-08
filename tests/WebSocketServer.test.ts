@@ -25,6 +25,57 @@ const send = (socket: WebSocket, type: string, data: Record<string, unknown>, re
   socket.send(JSON.stringify({ type, requestId, data }));
 };
 
+test('dual dice, preferences, reconnect and stale move rejection work over real sockets', async () => {
+  const server = new GameWebSocketServer(0);
+  await server.ready;
+  const a = new WebSocket(`ws://127.0.0.1:${server.port}`), b = new WebSocket(`ws://127.0.0.1:${server.port}`);
+  let request = 0;
+  const command = async (socket: WebSocket, type: string, data: Record<string, unknown>, expected: string) => {
+    const promise = waitForMessage(socket, expected);
+    send(socket, type, data, `dual-${++request}`);
+    return (await promise).data;
+  };
+  try {
+    await Promise.all([once(a, 'open'), once(b, 'open')]);
+    await command(a, 'AUTH', { guestId: 'dual-a' }, 'AUTH_OK');
+    await command(b, 'AUTH', { guestId: 'dual-b' }, 'AUTH_OK');
+    const { roomId } = await command(a, 'CREATE_ROOM', {}, 'ROOM_CREATED');
+    await command(b, 'JOIN_ROOM', { roomId }, 'GAME_STATE');
+    await command(a, 'SET_COLOR_PREFERENCE', { roomId, color: 'GREEN' }, 'GAME_STATE');
+    await command(b, 'SET_COLOR_PREFERENCE', { roomId, color: 'BLUE' }, 'GAME_STATE');
+    await command(a, 'READY', { roomId }, 'GAME_STATE');
+    await command(b, 'READY', { roomId }, 'GAME_STATE');
+    const started = await command(a, 'START_GAME', { roomId }, 'GAME_START');
+    assert.deepEqual((started.players as Array<{color: string}>).slice(0, 2).map((p) => p.color), ['GREEN', 'BLUE']);
+    assert.equal((await command(b, 'ROLL_DICE', { roomId }, 'ERROR')).code, 'NOT_YOUR_TURN');
+    const peerState = waitForMessage(b, 'GAME_STATE');
+    const rolled = await command(a, 'ROLL_DICE', { roomId, debugDice: 5 }, 'DICE_RESULT');
+    const synced = (await peerState).data;
+    assert.deepEqual(synced.diceChoices, rolled.diceChoices);
+    assert.equal(synced.phase, 'WAIT_SELECT_DIE');
+    const restored = await command(a, 'REJOIN_GAME', { roomId }, 'GAME_STATE');
+    assert.deepEqual(restored.diceChoices, rolled.diceChoices);
+    assert.equal(restored.rollId, rolled.rollId);
+    assert.equal((await command(a, 'SELECT_DIE', { roomId, dieIndex: 9, rollId: rolled.rollId }, 'ERROR')).code, 'INVALID_DIE');
+    const selectionState = waitForMessage(a, 'GAME_STATE');
+    const chosen = await command(a, 'SELECT_DIE', { roomId, dieIndex: 0, rollId: rolled.rollId }, 'DIE_SELECTED');
+    assert.equal(chosen.dice, 5);
+    const selected = (await selectionState).data;
+    assert.equal(selected.phase, 'WAIT_SELECT_PIECE');
+    const pieceId = (selected.movablePieceIds as string[])[0];
+    assert.ok((selected.movePreviews as Record<string, unknown>)[pieceId]);
+    assert.equal((await command(a, 'SELECT_PIECE', { roomId, pieceId, rollId: 0 }, 'ERROR')).code, 'INVALID_DIE');
+    const finalState = waitForMessage(b, 'GAME_STATE');
+    const move = await command(a, 'SELECT_PIECE', { roomId, pieceId, rollId: rolled.rollId }, 'MOVE_RESULT');
+    assert.equal(move.toProgress, 0);
+    assert.equal((await finalState).data.phase, 'WAIT_ROLL');
+  } finally {
+    a.close(); b.close();
+    await Promise.all([once(a, 'close'), once(b, 'close')]);
+    await server.close();
+  }
+});
+
 test('two authenticated players can create, join, ready and start a room', async () => {
   const server = new GameWebSocketServer(0);
   await server.ready;

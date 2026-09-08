@@ -211,12 +211,12 @@ export class GameEngine {
 
   /** Returns the forward main-track distance to a hostile aircraft that can roll onto this piece. */
   private threatDistance(game: GameState, target: Piece): number | null {
-    if (target.state !== 'MAIN_PATH' || target.progress < 0 || target.progress >= MAIN_PATH_LENGTH) return null;
+    if (target.state !== 'MAIN_PATH' || target.progress < 1 || target.progress >= FINAL_PATH_START) return null;
     const targetCell = getBoardCell(target.color, target.progress);
     if (!targetCell?.startsWith('M')) return null;
     const targetIndex = Number(targetCell.slice(1));
     const distances = game.pieces
-      .filter((piece) => piece.playerId !== target.playerId && piece.state === 'MAIN_PATH' && piece.progress >= 0 && piece.progress < MAIN_PATH_LENGTH)
+      .filter((piece) => piece.playerId !== target.playerId && piece.state === 'MAIN_PATH' && piece.progress >= 1 && piece.progress < FINAL_PATH_START)
       .map((piece) => getBoardCell(piece.color, piece.progress))
       .filter((cell): cell is string => !!cell && cell.startsWith('M'))
       .map((cell) => (targetIndex - Number(cell.slice(1)) + MAIN_PATH_LENGTH) % MAIN_PATH_LENGTH)

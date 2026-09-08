@@ -10,6 +10,9 @@
     "start": "node --env-file-if-exists=.env dist/index.js",
     "test": "tsx --test tests/**/*.test.ts",
     "check": "tsc --noEmit -p tsconfig.json",
+    "contract:sync": "node scripts/sync-client-contract.mjs",
+    "contract:check": "node scripts/sync-client-contract.mjs --check",
+    "verify:server": "tsx scripts/preview-server.ts",
     "db:bootstrap": "node --env-file-if-exists=.env scripts/bootstrap-database.mjs"
   },
   "dependencies": {

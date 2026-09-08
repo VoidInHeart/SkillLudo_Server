@@ -88,7 +88,7 @@ export class RoomManager {
 
   public findMatchRoom(): Room | undefined {
     return [...this.rooms.values()]
-      .filter((room) => room.status === 'WAITING' && room.players.length < 4)
+      .filter((room) => room.mode === 'MATCHMAKING' && room.status === 'WAITING' && room.players.length < 4)
       .sort((left, right) => left.createdAt - right.createdAt)[0];
   }
 
