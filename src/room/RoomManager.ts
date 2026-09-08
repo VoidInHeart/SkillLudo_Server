@@ -14,7 +14,7 @@ export class RoomManager {
   public createRoom(player: Omit<Player, 'color' | 'ready'>): Room {
     const roomId = this.generateRoomId();
     const owner = { ...player, color: colors[0], ready: false };
-    const room: Room = { roomId, ownerId: owner.id, status: 'WAITING', players: [owner], createdAt: Date.now(), lastActiveAt: Date.now(), chatHistory: [] };
+    const room: Room = { roomId, ownerId: owner.id, status: 'WAITING', mode: 'PRIVATE', players: [owner], createdAt: Date.now(), lastActiveAt: Date.now(), chatHistory: [] };
     this.rooms.set(roomId, room);
     return room;
   }
@@ -30,7 +30,8 @@ export class RoomManager {
       return room;
     }
     if (room.players.length >= 4) throw new RoomError('ROOM_FULL', '房间已满');
-    room.players.push({ ...player, color: colors[room.players.length], ready: false });
+    const availableColor = colors.find((color) => !room.players.some((seat) => seat.color === color))!;
+    room.players.push({ ...player, color: availableColor, ready: false });
     this.touch(room);
     return room;
   }
@@ -57,6 +58,19 @@ export class RoomManager {
     const player = room.players.find((candidate) => candidate.id === playerId);
     if (!player) throw new RoomError('NOT_IN_ROOM');
     player.ready = ready;
+    this.touch(room);
+    return room;
+  }
+
+  public setColorPreference(roomId: string, playerId: string, preference: unknown): Room {
+    const room = this.requireRoom(roomId);
+    if (room.status !== 'WAITING') throw new RoomError('ROOM_ALREADY_STARTED');
+    if (room.mode === 'MATCHMAKING') throw new RoomError('INVALID_PHASE');
+    if (preference !== null && !colors.includes(preference as PlayerColor)) throw new RoomError('INVALID_MESSAGE', '请选择有效阵营或不限');
+    const player = room.players.find((candidate) => candidate.id === playerId);
+    if (!player) throw new RoomError('NOT_IN_ROOM');
+    player.preferredColor = preference as PlayerColor | null;
+    player.ready = false;
     this.touch(room);
     return room;
   }

@@ -1,4 +1,4 @@
-import type { GameState, MoveResult, Piece } from '../protocol.js';
+import type { GameState, MoveResult, MoveSegment, Piece } from '../protocol.js';
 import {
   FINAL_PATH_START, FINISH_PROGRESS, FLIGHT_STEPS, MAIN_PATH_LENGTH,
   SAME_COLOR_JUMP_STEPS, getBoardCell, isFlightTrigger, isSameColorMainCell
@@ -11,6 +11,7 @@ export class GameRules {
   }
 
   public canMove(piece: Piece, dice: number): boolean {
+    if (!Number.isInteger(dice) || dice < 1 || dice > 6) return false;
     if (this.canTakeOff(piece, dice)) return true;
     // A move that would pass the final square is legal: the plane advances to
     // the end and uses the remaining pips to move back along its own runway.
@@ -43,22 +44,26 @@ export class GameRules {
       }
     }
 
+    const segments: MoveSegment[] = [{ kind: tookOff ? 'TAKEOFF' : 'WALK', fromProgress, toProgress: progress, path: [...path] }];
     let jumped = false;
     let usedFlightPath = false;
     // Taking off only places a plane on its coloured arrow. It does not also
     // consume a same-colour jump in the same action.
-    if (!tookOff && progress < MAIN_PATH_LENGTH && isSameColorMainCell(piece.color, progress)) {
+    if (!tookOff && !isFlightTrigger(piece.color, progress) && isSameColorMainCell(piece.color, progress)) {
       const target = progress + SAME_COLOR_JUMP_STEPS;
-      if (target < MAIN_PATH_LENGTH) {
-        for (let next = progress + 1; next <= target; next += 1) path.push(next);
+      // The home turn arrow is a same-colour square but must enter the runway.
+      if (target < FINAL_PATH_START) {
+        segments.push({ kind: 'JUMP', fromProgress: progress, toProgress: target, path: [target] });
+        path.push(target);
         progress = target;
         jumped = true;
       }
     }
-    if (progress < MAIN_PATH_LENGTH && isFlightTrigger(piece.color, progress)) {
+    if (isFlightTrigger(piece.color, progress)) {
       const target = progress + FLIGHT_STEPS;
-      if (target < MAIN_PATH_LENGTH) {
-        for (let next = progress + 1; next <= target; next += 1) path.push(next);
+      if (target < FINAL_PATH_START) {
+        segments.push({ kind: 'FLIGHT', fromProgress: progress, toProgress: target, path: [target] });
+        path.push(target);
         progress = target;
         usedFlightPath = true;
       }
@@ -68,12 +73,15 @@ export class GameRules {
     // A wormhole is not a jump. While flying through it, the plane also checks
     // the third square before the exit, as required by the board rule.
     const collisionProgresses = usedFlightPath ? [progress, progress - 3] : [progress];
-    const killedPieceIds = this.findCollisions(game, piece, collisionProgresses);
+    const captures = collisionProgresses.flatMap((atProgress) => this.findCollisions(game, piece, [atProgress]).map((pieceId) => ({ pieceId, atProgress })));
+    const killedPieceIds = [...new Set(captures.map((capture) => capture.pieceId))];
     return {
       pieceId,
       fromProgress,
       toProgress: progress,
       path,
+      segments,
+      captures,
       tookOff,
       jumped,
       usedFlightPath,

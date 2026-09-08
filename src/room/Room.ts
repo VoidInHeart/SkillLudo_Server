@@ -1,4 +1,4 @@
-import type { ChatEntry, GameState, PlayerColor, RoomStatus } from '../protocol.js';
+import type { ChatEntry, GameState, PlayerColor, RoomMode, RoomStatus } from '../protocol.js';
 
 export interface Player {
   id: string;
@@ -6,6 +6,7 @@ export interface Player {
   nickname: string;
   avatarUrl?: string;
   color: PlayerColor;
+  preferredColor?: PlayerColor | null;
   isBot?: boolean;
   aiControlled?: boolean;
   ready: boolean;
@@ -19,6 +20,7 @@ export interface Room {
   roomId: string;
   ownerId: string;
   status: RoomStatus;
+  mode?: RoomMode;
   players: Player[];
   game?: GameState;
   createdAt: number;

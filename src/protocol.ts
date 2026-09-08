@@ -2,7 +2,10 @@
 export type PlayerColor = 'RED' | 'YELLOW' | 'BLUE' | 'GREEN';
 export type PieceState = 'AIRPORT' | 'MAIN_PATH' | 'FINAL_PATH' | 'FINISHED';
 export type RoomStatus = 'WAITING' | 'PLAYING' | 'FINISHED';
-export type GamePhase = 'WAIT_ROLL' | 'WAIT_SELECT_PIECE' | 'RESOLVING_MOVE' | 'GAME_OVER';
+export const PROTOCOL_VERSION = 2;
+export type GamePhase = 'WAIT_ROLL' | 'WAIT_SELECT_DIE' | 'WAIT_SELECT_PIECE' | 'RESOLVING_MOVE' | 'GAME_OVER';
+export type DicePair = [number, number];
+export type RoomMode = 'PRIVATE' | 'MATCHMAKING';
 
 export interface ClientMessage<T = unknown> {
   type: ClientMessageType;
@@ -13,8 +16,8 @@ export interface ClientMessage<T = unknown> {
 export type ClientMessageType =
   | 'AUTH' | 'REGISTER' | 'LOGIN' | 'CREATE_ROOM' | 'JOIN_ROOM' | 'LEAVE_ROOM'
   | 'QUICK_MATCH' | 'CHAT_SEND'
-  | 'READY' | 'CANCEL_READY' | 'START_GAME'
-  | 'ROLL_DICE' | 'SELECT_PIECE' | 'PING' | 'RECONNECT'
+  | 'READY' | 'CANCEL_READY' | 'START_GAME' | 'SET_COLOR_PREFERENCE'
+  | 'ROLL_DICE' | 'SELECT_DIE' | 'SELECT_PIECE' | 'USE_SKILL' | 'PING' | 'RECONNECT'
   | 'CALIBRATION_OPEN' | 'CALIBRATION_SAVE'
   | 'SET_AI_TAKEOVER' | 'EXIT_GAME' | 'REJOIN_GAME';
 
@@ -29,7 +32,7 @@ export type ServerMessageType =
   | 'AUTH_OK' | 'ROOM_CREATED' | 'ROOM_STATE'
   | 'PLAYER_JOINED' | 'PLAYER_LEFT' | 'PLAYER_READY_CHANGED'
   | 'CHAT_MESSAGE' | 'CHAT_HISTORY' | 'SYSTEM_MESSAGE'
-  | 'GAME_START' | 'TURN_START' | 'DICE_RESULT' | 'MOVABLE_PIECES'
+  | 'GAME_START' | 'TURN_START' | 'DICE_RESULT' | 'DIE_SELECTED' | 'MOVABLE_PIECES'
   | 'MOVE_RESULT' | 'GAME_STATE' | 'PLAYER_DISCONNECTED'
   | 'PLAYER_RECONNECTED' | 'GAME_OVER' | 'ERROR' | 'PONG'
   | 'BOARD_CALIBRATION_DATA' | 'BOARD_CALIBRATION_OPEN' | 'BOARD_CALIBRATION_SAVED'
@@ -46,6 +49,9 @@ export enum ErrorCode {
   NOT_READY = 'NOT_READY',
   NOT_YOUR_TURN = 'NOT_YOUR_TURN',
   INVALID_PHASE = 'INVALID_PHASE',
+  INVALID_DIE = 'INVALID_DIE',
+  MATCHMAKING_DISABLED = 'MATCHMAKING_DISABLED',
+  SKILL_UNAVAILABLE = 'SKILL_UNAVAILABLE',
   INVALID_PIECE = 'INVALID_PIECE',
   PIECE_NOT_MOVABLE = 'PIECE_NOT_MOVABLE',
   INVALID_SESSION = 'INVALID_SESSION',
@@ -64,11 +70,22 @@ export interface BoardCalibrationData {
   sequence: string[];
 }
 
+export interface BoardCalibrationOpen {
+  key: string;
+  index: number;
+  total: number;
+  position?: BoardPosition;
+  single: boolean;
+}
+
+export interface ErrorPayload { code: string; message: string; }
+
 export interface PlayerPublicState {
   id: string;
   nickname: string;
   avatarUrl?: string;
   color: PlayerColor;
+  preferredColor?: PlayerColor | null;
   isBot?: boolean;
   aiControlled?: boolean;
   ready: boolean;
@@ -88,7 +105,7 @@ export interface Piece {
   playerId: string;
   color: PlayerColor;
   state: PieceState;
-  /** -1 at the airport; otherwise 0–57 along the owner-specific route. */
+  /** -1 at airport, 0 takeoff, 1–50 shared ring, 51–56 private runway. */
   progress: number;
 }
 
@@ -96,6 +113,9 @@ export interface GameState {
   currentPlayerIndex: number;
   phase: GamePhase;
   dice: number | null;
+  diceChoices: DicePair | null;
+  selectedDieIndex: number | null;
+  rollId: number;
   pieces: Piece[];
   movablePieceIds: string[];
   rankings: string[];
@@ -103,18 +123,40 @@ export interface GameState {
 }
 
 export interface GameSnapshot {
+  protocolVersion: number;
   roomId: string;
   roomStatus: RoomStatus;
+  roomMode: RoomMode;
   ownerId: string;
   players: PlayerPublicState[];
   currentPlayerId: string | null;
   phase: GamePhase | null;
   dice: number | null;
+  diceChoices: DicePair | null;
+  selectedDieIndex: number | null;
+  rollId: number;
   pieces: Piece[];
   movablePieceIds: string[];
   rankings: string[];
   turnNumber: number;
+  movePreviews: Record<string, MoveResult>;
+  skills: PlayerSkillState[];
 }
+
+export interface DiceResult { playerId: string; diceChoices: DicePair; rollId: number; }
+export interface DieSelected {
+  playerId: string;
+  dieIndex: number;
+  dice: number;
+  rollId: number;
+  movablePieceIds: string[];
+  skipped: boolean;
+  extraTurn: boolean;
+}
+
+export type SkillWindow = 'TURN_START' | 'DIE_SELECTED' | 'BEFORE_MOVE' | 'AFTER_MOVE';
+export interface SkillCommand { roomId: string; skillId: string; targetPieceId?: string; rollId: number; }
+export interface PlayerSkillState { playerId: string; skillId: string; charges: number; cooldownTurns: number; }
 
 export type ChatKind = 'PUBLIC' | 'PRIVATE' | 'SYSTEM';
 export interface ChatEntry {
@@ -133,6 +175,8 @@ export interface MoveResult {
   toProgress: number;
   /** Progress points after each visual step, including jump/flight steps. */
   path: number[];
+  segments: MoveSegment[];
+  captures: Array<{ pieceId: string; atProgress: number }>;
   tookOff: boolean;
   jumped: boolean;
   usedFlightPath: boolean;
@@ -140,6 +184,13 @@ export interface MoveResult {
   reachedFinish: boolean;
   playerFinished: boolean;
   extraTurn: boolean;
+}
+
+export interface MoveSegment {
+  kind: 'WALK' | 'TAKEOFF' | 'JUMP' | 'FLIGHT';
+  fromProgress: number;
+  toProgress: number;
+  path: number[];
 }
 
 export interface AuthData {

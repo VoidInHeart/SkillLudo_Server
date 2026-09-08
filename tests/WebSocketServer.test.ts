@@ -82,7 +82,7 @@ test('two authenticated players can create, join, ready and start a room', async
   }
 });
 
-test('quick match pairs clients and broadcasts room chat', async () => {
+test('quick match is disabled; private rooms still broadcast room chat', async () => {
   const server = new GameWebSocketServer(0);
   await server.ready;
   const url = `ws://127.0.0.1:${server.port}`;
@@ -97,13 +97,16 @@ test('quick match pairs clients and broadcasts room chat', async () => {
     send(b, 'AUTH', { guestId: 'match-b', nickname: '乙' });
     await expected;
 
-    expected = waitForMessage(a, 'ROOM_CREATED');
+    expected = waitForMessage(a, 'ERROR');
     send(a, 'QUICK_MATCH', {});
+    assert.equal((await expected).data.code, 'MATCHMAKING_DISABLED');
+    expected = waitForMessage(a, 'ROOM_CREATED');
+    send(a, 'CREATE_ROOM', {});
     const created = await expected;
     const roomId = created.data.roomId as string;
 
     expected = waitForMessage(b, 'GAME_STATE');
-    send(b, 'QUICK_MATCH', {});
+    send(b, 'JOIN_ROOM', { roomId });
     const matched = await expected;
     assert.equal(matched.data.roomId, roomId);
     assert.equal((matched.data.players as unknown[]).length, 2);

@@ -1,7 +1,9 @@
-import type { GameSnapshot, GameState, MoveResult, Piece, PlayerColor } from '../protocol.js';
+import { randomInt } from 'node:crypto';
+import { PROTOCOL_VERSION, type DiceResult, type DieSelected, type GameSnapshot, type GameState, type MoveResult, type Piece, type PlayerColor } from '../protocol.js';
 import type { Room } from '../room/Room.js';
 import { GameRules } from './GameRules.js';
-import { MAIN_PATH_LENGTH, getBoardCell } from './PathData.js';
+import { FINAL_PATH_START, MAIN_PATH_LENGTH, getBoardCell } from './PathData.js';
+import { assignColors } from '../room/ColorAssignment.js';
 
 const GAME_COLORS: PlayerColor[] = ['RED', 'YELLOW', 'BLUE', 'GREEN'];
 
@@ -10,21 +12,26 @@ export class GameError extends Error {
 }
 
 export class GameEngine {
-  public constructor(private readonly rules = new GameRules(), private readonly random = Math.random) {}
+  public constructor(private readonly rules = new GameRules(), private readonly random = () => randomInt(0, 0x100000000) / 0x100000000) {}
 
   public startGame(room: Room): void {
+    if (room.status !== 'WAITING') throw new GameError('INVALID_PHASE');
     const humanPlayers = room.players.filter((player) => !player.isBot);
     if (humanPlayers.length < 2) throw new GameError('NOT_READY', '至少需要两名玩家');
     if (!humanPlayers.every((player) => player.ready)) throw new GameError('NOT_READY', '所有玩家必须准备');
     this.fillAiSeats(room);
     // Colours are finalized only as the game begins, so every participant sees
     // one unambiguous colour assignment in the GAME_START snapshot.
-    room.players.forEach((player, index) => { player.color = GAME_COLORS[index]; });
+    const assigned = assignColors(room.players, this.random, room.mode);
+    room.players.forEach((player) => { player.color = assigned.get(player.id)!; });
     room.status = 'PLAYING';
     room.game = {
       currentPlayerIndex: 0,
       phase: 'WAIT_ROLL',
       dice: null,
+      diceChoices: null,
+      selectedDieIndex: null,
+      rollId: 0,
       pieces: room.players.flatMap((player) => this.createPieces(player.id, player.color)),
       movablePieceIds: [],
       rankings: [],
@@ -32,16 +39,31 @@ export class GameEngine {
     };
   }
 
-  public rollDice(room: Room, playerId: string, forcedDice?: number): { dice: number; movablePieceIds: string[]; skipped: boolean; extraTurn: boolean } {
+  public rollDice(room: Room, playerId: string, forcedDice?: number): DiceResult {
     const game = this.requireGame(room);
     this.assertCurrentPlayer(room, playerId);
     if (game.phase !== 'WAIT_ROLL') throw new GameError('INVALID_PHASE');
     if (forcedDice !== undefined && (!Number.isInteger(forcedDice) || forcedDice < 1 || forcedDice > 6)) {
       throw new GameError('INVALID_PHASE', '点数必须为 1–6');
     }
-    const dice = forcedDice ?? Math.floor(this.random() * 6) + 1;
+    game.diceChoices = [forcedDice ?? Math.floor(this.random() * 6) + 1, Math.floor(this.random() * 6) + 1];
+    game.dice = null;
+    game.selectedDieIndex = null;
+    game.movablePieceIds = [];
+    game.rollId += 1;
+    game.phase = 'WAIT_SELECT_DIE';
+    return { playerId, diceChoices: [...game.diceChoices], rollId: game.rollId };
+  }
+
+  public selectDie(room: Room, playerId: string, dieIndex: number, rollId: number): DieSelected {
+    const game = this.requireGame(room);
+    this.assertCurrentPlayer(room, playerId);
+    if (game.phase !== 'WAIT_SELECT_DIE' || !game.diceChoices) throw new GameError('INVALID_PHASE');
+    if ((dieIndex !== 0 && dieIndex !== 1) || rollId !== game.rollId) throw new GameError('INVALID_DIE', '骰子选择已失效，请选择本次投出的骰子');
+    const dice = game.diceChoices[dieIndex];
     const movable = this.rules.getMovablePieces(game, playerId, dice);
     game.dice = dice;
+    game.selectedDieIndex = dieIndex;
     game.movablePieceIds = movable.map((piece) => piece.id);
     if (movable.length === 0) {
       game.dice = null;
@@ -50,10 +72,21 @@ export class GameEngine {
       // A six earns another roll even when there is no legal plane to move.
       const extraTurn = dice === 6;
       if (!extraTurn) this.nextTurn(room);
-      return { dice, movablePieceIds: [], skipped: true, extraTurn };
+      return { playerId, dieIndex, dice, rollId, movablePieceIds: [], skipped: true, extraTurn };
     }
     game.phase = 'WAIT_SELECT_PIECE';
-    return { dice, movablePieceIds: game.movablePieceIds, skipped: false, extraTurn: dice === 6 };
+    return { playerId, dieIndex, dice, rollId, movablePieceIds: [...game.movablePieceIds], skipped: false, extraTurn: dice === 6 };
+  }
+
+  public chooseAiDie(room: Room, playerId: string): number {
+    const game = this.requireGame(room);
+    this.assertCurrentPlayer(room, playerId);
+    if (game.phase !== 'WAIT_SELECT_DIE' || !game.diceChoices) throw new GameError('INVALID_PHASE');
+    const scores = game.diceChoices.map((dice) => {
+      const moves = this.rules.getMovablePieces(game, playerId, dice).map((piece) => this.rules.calculateMove(game, playerId, piece.id, dice));
+      return moves.length ? Math.max(...moves.map((move) => (move.reachedFinish ? 100 : 0) + move.killedPieceIds.length * 30 + (move.tookOff ? 20 : 0) + (move.extraTurn ? 15 : 0) + move.toProgress - move.fromProgress)) : -1;
+    });
+    return scores[1] > scores[0] ? 1 : 0;
   }
 
   /** Chooses a server-side AI move without changing the game state. */
@@ -73,7 +106,7 @@ export class GameEngine {
     // Until every plane has entered its final runway, keep advancing aircraft
     // still on the shared main route. Within that group, protect threatened
     // aircraft; the requested tie-breaker prefers the farthest enemy behind.
-    const mainRoute = movable.filter((piece) => piece.state === 'MAIN_PATH' && piece.progress < MAIN_PATH_LENGTH);
+    const mainRoute = movable.filter((piece) => piece.state === 'MAIN_PATH' && piece.progress < FINAL_PATH_START);
     const candidates = mainRoute.length > 0 ? mainRoute : movable;
     const threatened = candidates
       .map((piece) => ({ piece, distance: this.threatDistance(game, piece) }))
@@ -91,12 +124,12 @@ export class GameEngine {
     if (game.phase !== 'WAIT_SELECT_PIECE' || game.dice === null) throw new GameError('INVALID_PHASE');
     if (!game.movablePieceIds.includes(pieceId)) throw new GameError('PIECE_NOT_MOVABLE');
 
-    game.phase = 'RESOLVING_MOVE';
     const result = this.rules.calculateMove(game, playerId, pieceId, game.dice);
     const piece = game.pieces.find((candidate) => candidate.id === pieceId);
     if (!piece) throw new GameError('INVALID_PIECE');
+    game.phase = 'RESOLVING_MOVE';
     piece.progress = result.toProgress;
-    piece.state = result.reachedFinish ? 'FINISHED' : result.toProgress >= 52 ? 'FINAL_PATH' : 'MAIN_PATH';
+    piece.state = result.reachedFinish ? 'FINISHED' : result.toProgress >= FINAL_PATH_START ? 'FINAL_PATH' : 'MAIN_PATH';
     for (const killedId of result.killedPieceIds) {
       const killed = game.pieces.find((candidate) => candidate.id === killedId);
       if (killed) {
@@ -130,17 +163,24 @@ export class GameEngine {
   public getSnapshot(room: Room): GameSnapshot {
     const game = room.game;
     return {
+      protocolVersion: PROTOCOL_VERSION,
       roomId: room.roomId,
       roomStatus: room.status,
+      roomMode: room.mode ?? 'PRIVATE',
       ownerId: room.ownerId,
-      players: room.players.map(({ id, nickname, avatarUrl, color, isBot, aiControlled, ready, connected }) => ({ id, nickname, avatarUrl, color, isBot, aiControlled, ready, connected })),
+      players: room.players.map(({ id, nickname, avatarUrl, color, preferredColor, isBot, aiControlled, ready, connected }) => ({ id, nickname, avatarUrl, color, preferredColor: preferredColor ?? null, isBot, aiControlled, ready, connected })),
       currentPlayerId: game ? room.players[game.currentPlayerIndex]?.id ?? null : null,
       phase: game?.phase ?? null,
       dice: game?.dice ?? null,
-      pieces: game?.pieces ?? [],
-      movablePieceIds: game?.movablePieceIds ?? [],
-      rankings: game?.rankings ?? [],
-      turnNumber: game?.turnNumber ?? 0
+      diceChoices: game?.diceChoices ? [...game.diceChoices] : null,
+      selectedDieIndex: game?.selectedDieIndex ?? null,
+      rollId: game?.rollId ?? 0,
+      pieces: game?.pieces.map((piece) => ({ ...piece })) ?? [],
+      movablePieceIds: [...(game?.movablePieceIds ?? [])],
+      rankings: [...(game?.rankings ?? [])],
+      turnNumber: game?.turnNumber ?? 0,
+      movePreviews: game?.phase === 'WAIT_SELECT_PIECE' && game.dice !== null ? Object.fromEntries(game.movablePieceIds.map((id) => [id, this.rules.calculateMove(game, room.players[game.currentPlayerIndex].id, id, game.dice!)])) : {},
+      skills: []
     };
   }
 

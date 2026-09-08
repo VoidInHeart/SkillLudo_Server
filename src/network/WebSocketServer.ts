@@ -145,12 +145,20 @@ export class GameWebSocketServer {
       case 'CREATE_ROOM': this.createRoom(socket, session, message.requestId); break;
       case 'JOIN_ROOM': this.joinRoom(socket, session, roomId, message.requestId); break;
       case 'LEAVE_ROOM': this.leaveRoom(session, roomId); break;
-      case 'QUICK_MATCH': this.quickMatch(socket, session, message.requestId); break;
+      case 'QUICK_MATCH': throw new GameError('MATCHMAKING_DISABLED', '快速匹配暂未开放，请创建或加入好友房间');
       case 'CHAT_SEND': this.sendChat(socket, session, roomId, message.data, message.requestId); break;
       case 'READY': this.setReady(session, roomId, true, message.requestId); break;
       case 'CANCEL_READY': this.setReady(session, roomId, false, message.requestId); break;
+      case 'SET_COLOR_PREFERENCE': {
+        this.assertSessionRoom(session, roomId);
+        const room = this.rooms.setColorPreference(roomId, session.playerId, isRecord(message.data) ? message.data.color : undefined);
+        this.broadcastState(room, message.requestId);
+        break;
+      }
       case 'START_GAME': this.startGame(session, roomId, message.requestId); break;
       case 'ROLL_DICE': this.rollDice(session, roomId, message.data, message.requestId); break;
+      case 'SELECT_DIE': this.selectDie(session, roomId, message.data, message.requestId); break;
+      case 'USE_SKILL': throw new GameError('SKILL_UNAVAILABLE', '本局尚未启用阵营技能');
       case 'SELECT_PIECE': this.selectPiece(session, roomId, this.pieceIdFrom(message.data), message.requestId); break;
       case 'PING': this.ping(socket, session, roomId, message.requestId); break;
       case 'RECONNECT': this.reconnect(socket, session, roomId, message.requestId); break;
@@ -273,12 +281,23 @@ export class GameWebSocketServer {
     const debugDice = this.debugDiceFrom(data);
     if (debugDice !== undefined && !this.allowDebugDice) throw new GameError('INVALID_MESSAGE', '当前服务未开启调试点数');
     const result = this.game.rollDice(room, session.playerId, debugDice);
-    this.broadcast(room, 'DICE_RESULT', { playerId: session.playerId, ...result }, requestId);
+    this.broadcast(room, 'DICE_RESULT', result, requestId);
     this.broadcastState(room);
-    const snapshot = this.game.getSnapshot(room);
-    if (result.skipped) this.broadcast(room, 'TURN_START', this.turnData(snapshot));
     this.scheduleAiTurn(room);
-    this.log('ROLL_DICE', room, session, requestId, `dice=${result.dice}${debugDice ? ' debug' : ''}`);
+    this.log('ROLL_DICE', room, session, requestId, `dice=${result.diceChoices.join(',')}${debugDice ? ' debug' : ''}`);
+  }
+
+  private selectDie(session: Session, roomId: string, data: unknown, requestId: string): void {
+    this.assertSessionRoom(session, roomId);
+    const room = this.rooms.requireRoom(roomId);
+    this.assertManualControl(room, session.playerId);
+    if (!isRecord(data) || typeof data.dieIndex !== 'number' || typeof data.rollId !== 'number') throw new GameError('INVALID_DIE');
+    const result = this.game.selectDie(room, session.playerId, data.dieIndex, data.rollId);
+    this.broadcast(room, 'DIE_SELECTED', result, requestId);
+    this.broadcastState(room);
+    if (result.skipped) this.broadcast(room, 'TURN_START', this.turnData(this.game.getSnapshot(room)));
+    this.scheduleAiTurn(room);
+    this.log('SELECT_DIE', room, session, requestId, `index=${data.dieIndex} dice=${result.dice}`);
   }
 
   private selectPiece(session: Session, roomId: string, pieceId: string, requestId: string): void {
@@ -512,7 +531,7 @@ export class GameWebSocketServer {
     if (this.closing) return;
     const game = room.game;
     const player = game ? room.players[game.currentPlayerIndex] : undefined;
-    if (room.status !== 'PLAYING' || !game || !['WAIT_ROLL', 'WAIT_SELECT_PIECE'].includes(game.phase)
+    if (room.status !== 'PLAYING' || !game || !['WAIT_ROLL', 'WAIT_SELECT_DIE', 'WAIT_SELECT_PIECE'].includes(game.phase)
       || !player || (!player.isBot && !player.aiControlled) || this.aiTimers.has(room.roomId)) return;
     const timer = setTimeout(() => {
       this.aiTimers.delete(room.roomId);
@@ -526,15 +545,17 @@ export class GameWebSocketServer {
     const game = room.game;
     const player = game ? room.players[game.currentPlayerIndex] : undefined;
     if (room.status !== 'PLAYING' || !game || !player || (!player.isBot && !player.aiControlled)
-      || !['WAIT_ROLL', 'WAIT_SELECT_PIECE'].includes(game.phase)) return;
+      || !['WAIT_ROLL', 'WAIT_SELECT_DIE', 'WAIT_SELECT_PIECE'].includes(game.phase)) return;
     try {
       let rolledDice: number | undefined;
       if (game.phase === 'WAIT_ROLL') {
         const diceResult = this.game.rollDice(room, player.id);
-        rolledDice = diceResult.dice;
-        this.broadcast(room, 'DICE_RESULT', { playerId: player.id, ...diceResult, ai: true, trustee: !player.isBot });
-      }
-      if (game.phase === 'WAIT_SELECT_PIECE') {
+        this.broadcast(room, 'DICE_RESULT', { ...diceResult, ai: true, trustee: !player.isBot });
+      } else if (game.phase === 'WAIT_SELECT_DIE') {
+        const choice = this.game.selectDie(room, player.id, this.game.chooseAiDie(room, player.id), game.rollId);
+        rolledDice = choice.dice;
+        this.broadcast(room, 'DIE_SELECTED', choice);
+      } else if (game.phase === 'WAIT_SELECT_PIECE') {
         const pieceId = this.game.chooseAiPiece(room, player.id);
         if (pieceId) {
           const move = this.game.selectPiece(room, player.id, pieceId);

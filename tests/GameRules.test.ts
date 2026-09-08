@@ -10,7 +10,7 @@ const airportPiece = (overrides: Partial<Piece> = {}): Piece => ({
   id: 'red-1', playerId: 'p1', color: 'RED', state: 'AIRPORT', progress: -1, ...overrides
 });
 const gameWith = (...pieces: Piece[]): GameState => ({
-  currentPlayerIndex: 0, phase: 'WAIT_SELECT_PIECE', dice: 6,
+  currentPlayerIndex: 0, phase: 'WAIT_SELECT_PIECE', dice: 6, diceChoices: [6, 1], selectedDieIndex: 0, rollId: 1,
   pieces, movablePieceIds: [], rankings: [], turnNumber: 1
 });
 
@@ -20,7 +20,8 @@ test('all colours traverse the shared ring clockwise and turn at their own runwa
   assert.equal(getBoardCell('BLUE', 1), 'M13');
   assert.equal(getBoardCell('RED', 1), 'M26');
   assert.equal(getBoardCell('GREEN', 1), 'M39');
-  assert.equal(getBoardCell('YELLOW', 51), 'M50');
+  assert.equal(getBoardCell('YELLOW', 50), 'M49');
+  assert.equal(getBoardCell('YELLOW', 51), 'F-YELLOW-0');
 });
 
 test('a five or six can take an airport piece off onto its start arrow', () => {
@@ -36,14 +37,14 @@ test('a five or six can take an airport piece off onto its start arrow', () => {
 
 test('a piece bounces back from the final square when the dice overshoots', () => {
   const rules = new GameRules();
-  const piece = airportPiece({ state: 'FINAL_PATH', progress: 56 });
+  const piece = airportPiece({ state: 'FINAL_PATH', progress: 55 });
   assert.equal(rules.canMove(piece, 2), true);
   assert.equal(rules.canMove(piece, 1), true);
   assert.equal(rules.calculateMove(gameWith(piece), 'p1', 'red-1', 1).reachedFinish, true);
   const bounced = rules.calculateMove(gameWith(piece), 'p1', 'red-1', 2);
-  assert.equal(bounced.toProgress, 56);
+  assert.equal(bounced.toProgress, 55);
   assert.equal(bounced.reachedFinish, false);
-  assert.deepEqual(bounced.path, [57, 56]);
+  assert.deepEqual(bounced.path, [56, 55]);
 });
 
 test('a moved piece sends opponents on its shared cell back to the airport', () => {
@@ -77,10 +78,10 @@ test('the first player with four completed planes wins the game immediately', ()
       { id: 'p2', nickname: 'yellow', color: 'YELLOW', ready: true, connected: true, lastHeartbeatAt: Date.now() }
     ],
     game: gameWith(
-      airportPiece({ id: 'red-1', state: 'FINISHED', progress: 57 }),
-      airportPiece({ id: 'red-2', state: 'FINISHED', progress: 57 }),
-      airportPiece({ id: 'red-3', state: 'FINISHED', progress: 57 }),
-      airportPiece({ id: 'red-4', state: 'FINAL_PATH', progress: 56 }),
+      airportPiece({ id: 'red-1', state: 'FINISHED', progress: 56 }),
+      airportPiece({ id: 'red-2', state: 'FINISHED', progress: 56 }),
+      airportPiece({ id: 'red-3', state: 'FINISHED', progress: 56 }),
+      airportPiece({ id: 'red-4', state: 'FINAL_PATH', progress: 55 }),
       airportPiece({ id: 'yellow-1', playerId: 'p2', color: 'YELLOW', state: 'AIRPORT' })
     )
   } as unknown as Room;
@@ -107,7 +108,8 @@ test('starting with two people fills AI seats and a forced six retains the curre
   assert.equal(room.players.filter((player) => player.isBot).length, 2);
   assert.equal(room.game!.pieces.length, 16);
 
-  const dice = engine.rollDice(room, 'p1', 6);
+  const rolled = engine.rollDice(room, 'p1', 6);
+  const dice = engine.selectDie(room, 'p1', 0, rolled.rollId);
   assert.equal(dice.dice, 6);
   assert.equal(dice.extraTurn, true);
   const move = engine.selectPiece(room, 'p1', dice.movablePieceIds[0]);
