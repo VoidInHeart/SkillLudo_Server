@@ -4,12 +4,37 @@
 
 ## 启动
 
+使用 Node.js 24 和本机 MySQL，首次执行 `npm ci`，并按下一节准备数据库与 `.env`。随后可在本目录运行：
+
 ```powershell
-npm install
-npm run dev
+# Windows PowerShell：编译后后台启动，关闭终端后继续运行
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start.ps1
+
+# 前台运行，方便看实时输出，Ctrl+C 停止
+.\start.ps1 -Foreground
 ```
 
-默认监听 `ws://localhost:3000`。发布构建使用 `npm run build` 后执行 `npm start`。
+```sh
+# Linux / macOS / Git Bash
+sh ./start.sh
+# 前台运行
+sh ./start.sh --foreground
+```
+
+脚本通过自身位置找到项目，支持从其他目录调用。默认监听 `ws://127.0.0.1:3000`；可在本机 `.env` 设置 `PORT`。两个入口共用 `scripts/start-local.mjs`：读取 `.env`、编译 TypeScript、启动后台进程并等待端口就绪。已有本脚本启动的实例时会报告原 PID 并直接返回；其他服务占用端口时会报错，不会终止占用者。缺少依赖时请先运行 `npm ci`。
+
+后台输出追加到 `.runtime/server.out.log` 和 `.runtime/server.err.log`，PID、端口、启动时间保存在 `.runtime/server.json`；这些文件与 `.env` 均不入库。脚本不会自动重启崩溃的服务，也不设置开机启动。修改源码或 `.env` 后，需要先停止旧实例，再运行启动脚本。
+
+停止本脚本启动的后台实例（先核对记录中的 PID 仍属于本项目的 `dist/index.js`；重启电脑后旧记录可能过期）：
+
+```powershell
+$serverState = Get-Content .\.runtime\server.json -Raw | ConvertFrom-Json
+Get-CimInstance Win32_Process -Filter "ProcessId = $($serverState.pid)" | Select-Object ProcessId, CommandLine
+# 确认后执行；服务停止会丢失内存中的房间和棋局
+Stop-Process -Id $serverState.pid
+```
+
+Shell 可先用 `cat .runtime/server.json` 查看 PID，执行 `ps -p <PID> -o args=` 核对，再用 `kill <PID>` 停止。需要源码热重载时使用 `npm run dev`；发布构建仍可使用 `npm run build` 后执行 `npm start`。
 
 ## MySQL 账号与会话
 
@@ -21,12 +46,15 @@ $env:SKILLLUDO_DB_PASSWORD = '<SkillLudo 应用账号密码>'
 npm run db:bootstrap
 ```
 
-之后每次启动服务端只需要应用账号配置，参考 `.env.example`（真实密码不要提交到 Git）：
+初始化完成后移除当前终端的 root 密码变量，后续启动只使用应用账号：
 
 ```powershell
-$env:SKILLLUDO_DB_PASSWORD = '<SkillLudo 应用账号密码>'
-npm run dev
+Remove-Item Env:MYSQL_ROOT_PASSWORD
 ```
+
+参考 `.env.example` 创建本地 `.env`，配置 `SKILLLUDO_DB_HOST`、`SKILLLUDO_DB_PORT`、`SKILLLUDO_DB_NAME`、`SKILLLUDO_DB_USER`、`SKILLLUDO_DB_PASSWORD`。默认数据库为 `skill_ludo`，应用账号为 `skillludo_app`。密码仅放本机 `.env`，不写进启动脚本或 Git；启动器也不会将继承的 `MYSQL_ROOT_PASSWORD` 传给服务进程。`.env` 作为配置数据解析，不作为 Shell 代码执行。
+
+2026-09-09 已完成当前开发机的数据库初始化与应用账号连接验证；本机直接执行启动脚本即可，无需再次提供 root 密码。新机器仍需先初始化自己的数据库。
 
 新增 WebSocket 消息：
 
