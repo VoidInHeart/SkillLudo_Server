@@ -49,12 +49,16 @@ jobs:
         working-directory: SkillLudo_Server
         run: |
           docker build --build-arg GIT_SHA="$GITHUB_SHA" -t "skillludo/server:sha-$GITHUB_SHA" .
-          docker save "skillludo/server:sha-$GITHUB_SHA" | gzip -1 > ../server-image.tar.gz
+          container=$(docker create "skillludo/server:sha-$GITHUB_SHA")
+          mkdir ../runtime
+          docker cp "$container:/app/." ../runtime/
+          docker rm "$container"
+          tar -czhf ../server-runtime.tar.gz -C ../runtime .
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:
-          name: server-image-${{ github.sha }}
-          path: server-image.tar.gz
+          name: server-runtime-${{ github.sha }}
+          path: server-runtime.tar.gz
           retention-days: 7
           compression-level: 0
   deploy:
@@ -66,7 +70,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: server-image-${{ github.sha }}
+          name: server-runtime-${{ github.sha }}
       - name: Deploy using restricted SSH key
         env:
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
@@ -80,7 +84,7 @@ jobs:
           trap 'rm -f "$key" "$hosts"' EXIT
           printf '%s\n' "$DEPLOY_KEY" > "$key"
           printf '%s\n' "$KNOWN_HOSTS" > "$hosts"
-          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$DEPLOY_USER@$DEPLOY_HOST" "deploy $GITHUB_SHA" < server-image.tar.gz
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$DEPLOY_USER@$DEPLOY_HOST" "deploy $GITHUB_SHA" < server-runtime.tar.gz
       - name: Verify public readiness and deployed revision
         env:
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}

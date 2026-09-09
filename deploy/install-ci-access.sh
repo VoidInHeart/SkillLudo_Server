@@ -5,6 +5,7 @@ source_dir=$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd)
 id skillludo-deploy >/dev/null 2>&1 || useradd --create-home --shell /bin/bash skillludo-deploy
 install -d -o root -g root -m 755 /home/skillludo-deploy /home/skillludo-deploy/.ssh
 install -o root -g root -m 755 "$source_dir/deploy/ci-receiver.sh" /usr/local/sbin/skillludo-ci-receiver
+install -o root -g root -m 644 "$source_dir/deploy/Runtime.Dockerfile" /opt/skillludo/Runtime.Dockerfile
 python3 - <<'PY'
 from pathlib import Path
 key = Path('/tmp/skillludo-ci.pub').read_text().strip()
