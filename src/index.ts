@@ -5,11 +5,14 @@ import { UserRepository } from './auth/UserRepository.js';
 const configuredPort = Number.parseInt(process.env.PORT ?? '3000', 10);
 const users = new UserRepository();
 await users.verifyConnection();
-const server = new GameWebSocketServer(Number.isFinite(configuredPort) ? configuredPort : 3000, new SessionManager(users));
+const server = new GameWebSocketServer(Number.isFinite(configuredPort) ? configuredPort : 3000, new SessionManager(users), () => users.verifyConnection());
 await server.ready;
 console.info(`SkillLudo server listening on ${server.address()}`);
 
+let stopping = false;
 const shutdown = async (): Promise<void> => {
+  if (stopping) return;
+  stopping = true;
   console.info('Shutting down SkillLudo server...');
   await server.close();
   await users.close();

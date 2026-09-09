@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: skillludo
+spec:
+  selector: {app: skillludo-mysql}
+  ports:
+    - {name: mysql, port: 3306, targetPort: 3306}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: skillludo
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels: {app: skillludo-mysql}
+  template:
+    metadata:
+      labels: {app: skillludo-mysql}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: mysql
+          # Reuse the MySQL 8.4 image already verified on this host. Operator-owned;
+          # application CI never updates this database image or its data volume.
+          image: mysql:8.4
+          imagePullPolicy: IfNotPresent
+          args: ["--innodb-buffer-pool-size=128M", "--max-connections=80", "--performance-schema=OFF", "--mysqlx=OFF", "--skip-name-resolve"]
+          envFrom:
+            - secretRef: {name: mysql-credentials}
+          env:
+            - {name: MYSQL_DATABASE, value: skill_ludo}
+            - {name: MYSQL_USER, value: skillludo_app}
+          ports:
+            - {name: mysql, containerPort: 3306}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: '1', memory: 640Mi}
+          startupProbe:
+            exec:
+              command: [sh, -c, 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -h 127.0.0.1 -u skillludo_app skill_ludo -e "SELECT 1 FROM users LIMIT 1" >/dev/null']
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: [sh, -c, 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -h 127.0.0.1 -u skillludo_app skill_ludo -e "SELECT 1" >/dev/null']
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket: {port: mysql}
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/mysql}
+            - {name: schema, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: mysql-data}
+        - name: schema
+          configMap: {name: mysql-schema}

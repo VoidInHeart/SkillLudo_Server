@@ -1,0 +1,89 @@
+name: Server CI and deployment
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: skillludo-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: SkillLudo_Server
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: VoidInHeart/SkillLudo_Client
+          ref: 6a8c4c85abd900d7b6b60ade69bc713282257610
+          path: SkillLudo_Client
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+      - name: Server checks and regression
+        working-directory: SkillLudo_Server
+        run: |
+          npm ci
+          npm run check
+          npm run check:tests
+          npm test
+          npm run contract:check
+          npm run build
+          for script in start.sh deploy/*.sh; do bash -n "$script"; done
+      - name: Paired client pure-logic regression
+        working-directory: SkillLudo_Client
+        run: |
+          npm ci
+          npm run check:tests
+          npm test
+      - name: Build immutable release image
+        working-directory: SkillLudo_Server
+        run: |
+          docker build --build-arg GIT_SHA="$GITHUB_SHA" -t "skillludo/server:sha-$GITHUB_SHA" .
+          docker save "skillludo/server:sha-$GITHUB_SHA" | gzip -1 > ../server-image.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          name: server-image-${{ github.sha }}
+          path: server-image.tar.gz
+          retention-days: 7
+          compression-level: 0
+  deploy:
+    needs: verify-and-build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: server-image-${{ github.sha }}
+      - name: Deploy using restricted SSH key
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          key="$RUNNER_TEMP/skillludo_key"
+          hosts="$RUNNER_TEMP/skillludo_hosts"
+          trap 'rm -f "$key" "$hosts"' EXIT
+          printf '%s\n' "$DEPLOY_KEY" > "$key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$hosts"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$DEPLOY_USER@$DEPLOY_HOST" "deploy $GITHUB_SHA" < server-image.tar.gz
+      - name: Verify public readiness and deployed revision
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+        run: |
+          curl --fail --retry 5 --retry-delay 3 --max-time 10 "http://$DEPLOY_HOST/readyz" -o readiness.json
+          EXPECTED="$GITHUB_SHA" node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync("readiness.json"));if(r.status!=="ok"||r.revision!==process.env.EXPECTED)process.exit(1);console.log("Public readiness and revision verified")'

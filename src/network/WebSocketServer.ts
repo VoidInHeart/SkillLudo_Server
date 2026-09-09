@@ -1,5 +1,5 @@
 import { WebSocketServer as WsServer, type RawData, type WebSocket } from 'ws';
-import type { IncomingMessage } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { GameEngine, GameError } from '../game/GameEngine.js';
 import { BoardCalibrationStore } from '../game/BoardCalibrationStore.js';
 import type { AuthData, ChatEntry, ClientMessage, GameSnapshot, ServerMessage } from '../protocol.js';
@@ -23,6 +23,8 @@ const ROOM_IDLE_TIMEOUT_MS = 4 * 60 * 60_000;
 
 export class GameWebSocketServer {
   private readonly wss: WsServer;
+  private readonly http: Server;
+  private closePromise?: Promise<void>;
   public readonly ready: Promise<void>;
   private readonly rooms = new RoomManager();
   private readonly game = new GameEngine();
@@ -35,15 +37,19 @@ export class GameWebSocketServer {
   // authoritative and refuses forced rolls in a production deployment.
   private readonly allowDebugDice = process.env.NODE_ENV !== 'production' && process.env.SKILLLUDO_ALLOW_DEBUG_DICE !== 'false';
 
-  public constructor(port: number, private readonly sessions = new SessionManager()) {
-    this.wss = new WsServer({ port });
+  public constructor(port: number, private readonly sessions = new SessionManager(), readiness: () => Promise<void> = async () => {}) {
+    this.http = createServer((request, response) => { void this.health(request, response, readiness); });
+    this.http.requestTimeout = 10_000;
+    this.http.headersTimeout = 10_000;
+    this.wss = new WsServer({ server: this.http, maxPayload: 16 * 1024, perMessageDeflate: false });
     this.ready = new Promise((resolve, reject) => {
-      this.wss.once('listening', resolve);
-      this.wss.once('error', reject);
+      this.http.once('listening', resolve);
+      this.http.once('error', reject);
     });
     this.wss.on('connection', (socket, request) => this.onConnection(socket, request));
     this.wss.on('error', (error) => console.error('[WS_ERROR]', error));
     this.maintenanceTimer = setInterval(() => this.maintainRooms(), 10_000);
+    this.http.listen(port);
   }
 
   public address(): string { return `ws://0.0.0.0:${this.port}`; }
@@ -52,12 +58,44 @@ export class GameWebSocketServer {
     return typeof address === 'object' && address ? address.port : 0;
   }
 
-  public async close(): Promise<void> {
+  public close(): Promise<void> {
+    this.closePromise ??= this.shutdown();
+    return this.closePromise;
+  }
+
+  private async shutdown(): Promise<void> {
     this.closing = true;
     clearInterval(this.maintenanceTimer);
     this.aiTimers.forEach((timer) => clearTimeout(timer));
     this.aiTimers.clear();
-    await new Promise<void>((resolve, reject) => this.wss.close((error) => error ? reject(error) : resolve()));
+    const deadline = setTimeout(() => {
+      this.wss.clients.forEach((socket) => socket.terminate());
+      this.http.closeAllConnections();
+    }, 5_000);
+    try {
+      const closed = new Promise<void>((resolve, reject) => this.wss.close((error) => error ? reject(error) : resolve()));
+      this.wss.clients.forEach((socket) => socket.close(1012, 'Server restarting'));
+      await Promise.all([closed, new Promise<void>((resolve, reject) => this.http.close((error) => error ? reject(error) : resolve()))]);
+    } finally { clearTimeout(deadline); }
+  }
+
+  private async health(request: IncomingMessage, response: ServerResponse, readiness: () => Promise<void>): Promise<void> {
+    const path = request.url?.split('?')[0];
+    response.setHeader('Content-Type', 'application/json');
+    response.setHeader('Cache-Control', 'no-store');
+    if (request.method !== 'GET' || !['/healthz', '/readyz'].includes(path ?? '')) {
+      response.writeHead(404).end(JSON.stringify({ error: 'Not found' }));
+      return;
+    }
+    let ready = !this.closing;
+    if (ready && path === '/readyz') {
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([readiness(), new Promise<never>((_, reject) => { deadline = setTimeout(() => reject(new Error('Readiness timeout')), 2_000); })]);
+      } catch { ready = false; }
+      finally { clearTimeout(deadline); }
+    }
+    response.writeHead(ready ? 200 : 503).end(JSON.stringify({ status: ready ? 'ok' : 'unavailable', revision: process.env.GIT_SHA ?? 'local' }));
   }
 
   private onConnection(socket: WebSocket, request: IncomingMessage): void {

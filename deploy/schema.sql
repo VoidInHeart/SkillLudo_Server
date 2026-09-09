@@ -1,0 +1,39 @@
+USE skill_ludo;
+CREATE TABLE IF NOT EXISTS users (
+  id CHAR(36) PRIMARY KEY,
+  username VARCHAR(32) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  nickname VARCHAR(20) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS player_profiles (
+  user_id CHAR(36) PRIMARY KEY,
+  avatar_url VARCHAR(512) NULL,
+  total_games INT UNSIGNED NOT NULL DEFAULT 0,
+  wins INT UNSIGNED NOT NULL DEFAULT 0,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_player_profiles_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS user_sessions (
+  token_hash BINARY(32) PRIMARY KEY,
+  user_id CHAR(36) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user_sessions_user (user_id),
+  INDEX idx_user_sessions_expiry (expires_at),
+  CONSTRAINT fk_user_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS game_records (
+  id CHAR(36) PRIMARY KEY,
+  room_id CHAR(6) NOT NULL,
+  players_json JSON NOT NULL,
+  result_json JSON NOT NULL,
+  started_at DATETIME NULL,
+  finished_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_game_records_finished (finished_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+REVOKE ALL PRIVILEGES ON skill_ludo.* FROM 'skillludo_app'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON skill_ludo.* TO 'skillludo_app'@'%';

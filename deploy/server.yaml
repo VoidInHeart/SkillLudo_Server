@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: server
+  namespace: skillludo
+spec:
+  selector: {app: skillludo-server}
+  ports:
+    - {name: websocket, port: 3000, targetPort: websocket}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server
+  namespace: skillludo
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  # Rooms live in process memory: never run two independent authoritative instances.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: skillludo-server}
+  template:
+    metadata:
+      labels: {app: skillludo-server}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: server
+          image: skillludo/server:bootstrap
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          ports:
+            - {name: websocket, containerPort: 3000}
+          env:
+            - {name: SKILLLUDO_DB_HOST, value: mysql}
+            - {name: SKILLLUDO_DB_NAME, value: skill_ludo}
+            - {name: SKILLLUDO_DB_USER, value: skillludo_app}
+            - name: SKILLLUDO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: mysql-credentials, key: MYSQL_PASSWORD}
+          resources:
+            requests: {cpu: 200m, memory: 192Mi}
+            limits: {cpu: '1', memory: 768Mi}
+          startupProbe:
+            httpGet: {path: /readyz, port: websocket}
+            periodSeconds: 3
+            failureThreshold: 40
+          readinessProbe:
+            httpGet: {path: /readyz, port: websocket}
+            timeoutSeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: websocket}
+            timeoutSeconds: 3
+            periodSeconds: 15
+          volumeMounts:
+            - {name: board, mountPath: /app/config}
+      volumes:
+        - name: board
+          persistentVolumeClaim: {claimName: board-config}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: server
+  namespace: skillludo
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: server
+                port: {name: websocket}

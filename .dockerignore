@@ -1,0 +1,11 @@
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**
+!scripts/
+!scripts/smoke.mjs
+!scripts/load-test.mjs
+!config/
+!config/board-positions.json
