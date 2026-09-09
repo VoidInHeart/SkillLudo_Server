@@ -1,0 +1,481 @@
+{
+  "pod": "server-d77bcc87d-g5ttb",
+  "pid": 3794531,
+  "samples": [
+    {
+      "time": 1788945060.6659505,
+      "cpuCores": 0.4518,
+      "rssMiB": 102.32,
+      "cgroupMiB": 49.54,
+      "hostAvailableMiB": 1895.35,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945061.6666598,
+      "cpuCores": 0.6243,
+      "rssMiB": 112.22,
+      "cgroupMiB": 60.26,
+      "hostAvailableMiB": 1882.92,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945062.6673682,
+      "cpuCores": 0.5971,
+      "rssMiB": 112.94,
+      "cgroupMiB": 61.21,
+      "hostAvailableMiB": 1867.79,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945063.6679301,
+      "cpuCores": 0.3797,
+      "rssMiB": 113.63,
+      "cgroupMiB": 62.76,
+      "hostAvailableMiB": 1900.46,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945064.6685038,
+      "cpuCores": 0.4215,
+      "rssMiB": 114.0,
+      "cgroupMiB": 62.64,
+      "hostAvailableMiB": 1862.85,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945065.6690977,
+      "cpuCores": 0.3784,
+      "rssMiB": 114.37,
+      "cgroupMiB": 63.52,
+      "hostAvailableMiB": 1881.89,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945066.6696558,
+      "cpuCores": 0.4279,
+      "rssMiB": 114.94,
+      "cgroupMiB": 63.82,
+      "hostAvailableMiB": 1872.36,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945067.6702943,
+      "cpuCores": 0.4343,
+      "rssMiB": 115.4,
+      "cgroupMiB": 64.11,
+      "hostAvailableMiB": 1871.81,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945068.6709428,
+      "cpuCores": 0.3959,
+      "rssMiB": 115.78,
+      "cgroupMiB": 64.58,
+      "hostAvailableMiB": 1863.27,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945069.6715658,
+      "cpuCores": 0.4226,
+      "rssMiB": 116.33,
+      "cgroupMiB": 65.41,
+      "hostAvailableMiB": 1873.59,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945070.672305,
+      "cpuCores": 0.5254,
+      "rssMiB": 118.42,
+      "cgroupMiB": 67.51,
+      "hostAvailableMiB": 1865.29,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945071.672859,
+      "cpuCores": 0.4892,
+      "rssMiB": 116.05,
+      "cgroupMiB": 64.68,
+      "hostAvailableMiB": 1876.89,
+      "throttledPeriods": 1,
+      "throttledMs": 49.34
+    },
+    {
+      "time": 1788945072.6735365,
+      "cpuCores": 0.415,
+      "rssMiB": 116.05,
+      "cgroupMiB": 64.74,
+      "hostAvailableMiB": 1855.11,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945073.6743433,
+      "cpuCores": 0.427,
+      "rssMiB": 116.18,
+      "cgroupMiB": 64.84,
+      "hostAvailableMiB": 1878.02,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945074.6749156,
+      "cpuCores": 0.4545,
+      "rssMiB": 116.3,
+      "cgroupMiB": 64.96,
+      "hostAvailableMiB": 1876.37,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945075.6755662,
+      "cpuCores": 0.4174,
+      "rssMiB": 116.55,
+      "cgroupMiB": 65.18,
+      "hostAvailableMiB": 1864.45,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945076.6761997,
+      "cpuCores": 0.4082,
+      "rssMiB": 116.54,
+      "cgroupMiB": 65.59,
+      "hostAvailableMiB": 1871.89,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945077.6767888,
+      "cpuCores": 0.4143,
+      "rssMiB": 117.04,
+      "cgroupMiB": 65.75,
+      "hostAvailableMiB": 1872.5,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945078.6774306,
+      "cpuCores": 0.4359,
+      "rssMiB": 117.29,
+      "cgroupMiB": 65.98,
+      "hostAvailableMiB": 1870.57,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945079.6780012,
+      "cpuCores": 0.4135,
+      "rssMiB": 117.77,
+      "cgroupMiB": 66.4,
+      "hostAvailableMiB": 1853.98,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945080.678644,
+      "cpuCores": 0.4948,
+      "rssMiB": 118.25,
+      "cgroupMiB": 67.15,
+      "hostAvailableMiB": 1869.75,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945081.6794004,
+      "cpuCores": 0.4915,
+      "rssMiB": 119.25,
+      "cgroupMiB": 68.19,
+      "hostAvailableMiB": 1850.4,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945082.6800697,
+      "cpuCores": 0.3839,
+      "rssMiB": 119.84,
+      "cgroupMiB": 68.7,
+      "hostAvailableMiB": 1865.53,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945083.6806278,
+      "cpuCores": 0.4525,
+      "rssMiB": 120.33,
+      "cgroupMiB": 69.3,
+      "hostAvailableMiB": 1857.93,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945084.6811879,
+      "cpuCores": 0.4016,
+      "rssMiB": 121.08,
+      "cgroupMiB": 69.88,
+      "hostAvailableMiB": 1862.72,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945085.6818056,
+      "cpuCores": 0.4389,
+      "rssMiB": 121.71,
+      "cgroupMiB": 70.46,
+      "hostAvailableMiB": 1860.52,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945086.682377,
+      "cpuCores": 0.4053,
+      "rssMiB": 122.44,
+      "cgroupMiB": 71.27,
+      "hostAvailableMiB": 1857.73,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945087.6841905,
+      "cpuCores": 0.4269,
+      "rssMiB": 122.82,
+      "cgroupMiB": 71.62,
+      "hostAvailableMiB": 1839.73,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945088.6847231,
+      "cpuCores": 0.4833,
+      "rssMiB": 121.21,
+      "cgroupMiB": 69.85,
+      "hostAvailableMiB": 1846.71,
+      "throttledPeriods": 1,
+      "throttledMs": 3.82
+    },
+    {
+      "time": 1788945089.6853569,
+      "cpuCores": 0.3855,
+      "rssMiB": 121.7,
+      "cgroupMiB": 70.54,
+      "hostAvailableMiB": 1847.74,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945090.6861975,
+      "cpuCores": 0.4251,
+      "rssMiB": 121.79,
+      "cgroupMiB": 70.77,
+      "hostAvailableMiB": 1850.24,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945091.686753,
+      "cpuCores": 0.5092,
+      "rssMiB": 122.04,
+      "cgroupMiB": 70.89,
+      "hostAvailableMiB": 1852.46,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945092.687397,
+      "cpuCores": 0.4221,
+      "rssMiB": 122.16,
+      "cgroupMiB": 71.36,
+      "hostAvailableMiB": 1848.99,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945093.6879513,
+      "cpuCores": 0.4089,
+      "rssMiB": 122.15,
+      "cgroupMiB": 71.18,
+      "hostAvailableMiB": 1855.41,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945094.688667,
+      "cpuCores": 0.438,
+      "rssMiB": 122.4,
+      "cgroupMiB": 71.3,
+      "hostAvailableMiB": 1848.93,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945095.6892745,
+      "cpuCores": 0.4163,
+      "rssMiB": 122.4,
+      "cgroupMiB": 71.44,
+      "hostAvailableMiB": 1858.72,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945096.68993,
+      "cpuCores": 0.3845,
+      "rssMiB": 122.77,
+      "cgroupMiB": 71.66,
+      "hostAvailableMiB": 1857.31,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945097.6907337,
+      "cpuCores": 0.443,
+      "rssMiB": 122.65,
+      "cgroupMiB": 71.54,
+      "hostAvailableMiB": 1856.33,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945098.691336,
+      "cpuCores": 0.4243,
+      "rssMiB": 122.9,
+      "cgroupMiB": 71.62,
+      "hostAvailableMiB": 1824.92,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945099.691882,
+      "cpuCores": 0.4296,
+      "rssMiB": 123.17,
+      "cgroupMiB": 71.89,
+      "hostAvailableMiB": 1856.86,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945100.6924279,
+      "cpuCores": 0.4445,
+      "rssMiB": 123.16,
+      "cgroupMiB": 72.04,
+      "hostAvailableMiB": 1848.43,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945101.6931376,
+      "cpuCores": 0.4757,
+      "rssMiB": 123.41,
+      "cgroupMiB": 72.36,
+      "hostAvailableMiB": 1849.24,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945102.6936939,
+      "cpuCores": 0.4568,
+      "rssMiB": 123.66,
+      "cgroupMiB": 72.6,
+      "hostAvailableMiB": 1845.71,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945103.6942492,
+      "cpuCores": 0.3873,
+      "rssMiB": 123.91,
+      "cgroupMiB": 72.77,
+      "hostAvailableMiB": 1858.44,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945104.6947923,
+      "cpuCores": 0.4106,
+      "rssMiB": 124.16,
+      "cgroupMiB": 73.21,
+      "hostAvailableMiB": 1857.27,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945105.6953533,
+      "cpuCores": 0.4817,
+      "rssMiB": 121.87,
+      "cgroupMiB": 70.7,
+      "hostAvailableMiB": 1836.12,
+      "throttledPeriods": 1,
+      "throttledMs": 42.49
+    },
+    {
+      "time": 1788945106.6959248,
+      "cpuCores": 0.4202,
+      "rssMiB": 122.25,
+      "cgroupMiB": 71.39,
+      "hostAvailableMiB": 1846.79,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945107.696522,
+      "cpuCores": 0.4362,
+      "rssMiB": 122.37,
+      "cgroupMiB": 71.59,
+      "hostAvailableMiB": 1845.6,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945108.6973925,
+      "cpuCores": 0.2927,
+      "rssMiB": 125.05,
+      "cgroupMiB": 76.04,
+      "hostAvailableMiB": 1838.49,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945109.6980715,
+      "cpuCores": 0.4518,
+      "rssMiB": 127.86,
+      "cgroupMiB": 75.07,
+      "hostAvailableMiB": 1896.48,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945110.6987329,
+      "cpuCores": 0.0,
+      "rssMiB": 127.86,
+      "cgroupMiB": 75.07,
+      "hostAvailableMiB": 1895.51,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    },
+    {
+      "time": 1788945111.699365,
+      "cpuCores": 0.0011,
+      "rssMiB": 127.86,
+      "cgroupMiB": 75.07,
+      "hostAvailableMiB": 1902.43,
+      "throttledPeriods": 0,
+      "throttledMs": 0.0
+    }
+  ],
+  "summary": {
+    "maxCpuCores": 0.6243,
+    "meanCpuCores": 0.4203,
+    "maxRssMiB": 127.86,
+    "minHostAvailableMiB": 1824.92,
+    "throttledPeriods": 3
+  }
+}

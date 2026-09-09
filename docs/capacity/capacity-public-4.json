@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-09-09T09:31:08.084Z",
+  "url": "ws://81.70.145.148",
+  "rooms": 4,
+  "connections": 16,
+  "durationSeconds": 120.71,
+  "rampSeconds": 1.2,
+  "stepMs": 700,
+  "commands": 1500,
+  "commandsPerSecond": 12.43,
+  "latencyMs": {
+    "p50": 8.48,
+    "p95": 11.92,
+    "p99": 35.1,
+    "max": 123.32
+  },
+  "receivedMessages": 13406,
+  "receivedMbitPerSecond": 1.384,
+  "sentMbitPerSecond": 0.009,
+  "failedRooms": 0,
+  "errors": [],
+  "errorCount": 0
+}

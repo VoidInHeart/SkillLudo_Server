@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-09-09T09:21:26.387Z",
+  "url": "ws://81.70.145.148",
+  "rooms": 15,
+  "connections": 60,
+  "durationSeconds": 47.8,
+  "rampSeconds": 2.82,
+  "stepMs": 700,
+  "commands": 896,
+  "commandsPerSecond": 18.75,
+  "latencyMs": {
+    "p50": 9.83,
+    "p95": 1600.6,
+    "p99": 5425.97,
+    "max": 7110.67
+  },
+  "receivedMessages": 7565,
+  "receivedMbitPerSecond": 1.955,
+  "sentMbitPerSecond": 0.013,
+  "failedRooms": 6,
+  "errors": [
+    "RECONNECT timeout",
+    "SELECT_DIE timeout",
+    "PING timeout",
+    "PING timeout",
+    "PING timeout",
+    "SELECT_PIECE timeout"
+  ],
+  "errorCount": 6
+}

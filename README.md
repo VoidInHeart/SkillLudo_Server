@@ -95,4 +95,6 @@ npm run contract:check
 
 ## 生产接入前
 
+当前已部署到 `ws://81.70.145.148`，使用 k3s、独立 MySQL/PVC、单副本服务和 GitHub Actions 自动发布。健康检查为 `http://81.70.145.148/readyz`。部署账号、已配置的 GitHub Secret/Variable、日志与旧业务恢复方法见 [部署与运维](docs/部署与运维.md)。当前使用公网 IP，暂未配置 WSS 域名；发布镜像会中断内存中的棋局。
+
 开发环境的 `SessionManager` 仅用于本地试玩。微信上线前，应在 HTTPS 接口中校验微信临时登录凭证并以 `openid` 创建服务端 session；同时将公网入口置于 TLS 反向代理后，以 `wss://` 供小游戏连接。

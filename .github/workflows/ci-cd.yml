@@ -2,7 +2,13 @@ name: Server CI and deployment
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
 permissions:
   contents: read
@@ -45,6 +51,35 @@ jobs:
           npm ci
           npm run check:tests
           npm test
+      - name: Real MySQL schema and account integration
+        working-directory: SkillLudo_Server
+        env:
+          NODE_ENV: production
+          SKILLLUDO_DB_HOST: 127.0.0.1
+          SKILLLUDO_DB_PORT: '3307'
+          SKILLLUDO_DB_NAME: skill_ludo
+          SKILLLUDO_DB_USER: skillludo_app
+          SKILLLUDO_DB_PASSWORD: ci-only-application-password
+        run: |
+          server_pid=''
+          trap 'if [ -n "$server_pid" ]; then kill "$server_pid" 2>/dev/null || true; wait "$server_pid" || true; fi; docker rm -f skillludo-ci-mysql >/dev/null 2>&1 || true' EXIT
+          docker run -d --name skillludo-ci-mysql -p 127.0.0.1:3307:3306 -e MYSQL_ROOT_PASSWORD=ci-only-root-password -e MYSQL_DATABASE=skill_ludo -e MYSQL_USER=skillludo_app -e MYSQL_PASSWORD="$SKILLLUDO_DB_PASSWORD" mysql:8.4 --innodb-buffer-pool-size=128M --skip-name-resolve
+          for attempt in $(seq 1 60); do
+            if docker exec skillludo-ci-mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -h127.0.0.1 -e "SELECT 1"' >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          # Replay twice to catch initialization and privilege-idempotency errors.
+          for attempt in 1 2; do
+            docker exec -i skillludo-ci-mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -uroot' < deploy/schema.sql
+          done
+          node dist/index.js > "$RUNNER_TEMP/skillludo-integration.log" 2>&1 &
+          server_pid=$!
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/readyz >/dev/null; then break; fi
+            sleep 1
+          done
+          node scripts/smoke.mjs
+          node scripts/auth-benchmark.mjs
       - name: Build immutable release image
         working-directory: SkillLudo_Server
         run: |

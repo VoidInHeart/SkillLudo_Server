@@ -1,0 +1,1 @@
+{"timestamp":"2026-09-09T09:04:27.574Z","url":"ws://server:3000","rooms":25,"connections":100,"durationSeconds":45.69,"rampSeconds":0.38,"stepMs":700,"commands":3610,"commandsPerSecond":79.01,"latencyMs":{"p50":0.59,"p95":1.43,"p99":2.16,"max":4.3},"receivedMessages":32406,"receivedMbitPerSecond":8.865,"sentMbitPerSecond":0.057,"failedRooms":0,"errors":[],"errorCount":0}

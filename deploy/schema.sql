@@ -35,5 +35,5 @@ CREATE TABLE IF NOT EXISTS game_records (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_game_records_finished (finished_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-REVOKE ALL PRIVILEGES ON skill_ludo.* FROM 'skillludo_app'@'%';
-GRANT SELECT, INSERT, UPDATE, DELETE ON skill_ludo.* TO 'skillludo_app'@'%';
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'skillludo_app'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON `skill\_ludo`.* TO 'skillludo_app'@'%';

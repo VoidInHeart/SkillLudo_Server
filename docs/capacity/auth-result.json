@@ -1,0 +1,12 @@
+{
+  "accounts": 32,
+  "concurrency": 4,
+  "durationSeconds": 4.64,
+  "latencyMs": {
+    "REGISTER": {"count": 32, "p50": 293.88, "p95": 320.11, "max": 380.03},
+    "LOGIN": {"count": 32, "p50": 284.52, "p95": 369.57, "max": 370.48},
+    "RESTORE": {"count": 32, "p50": 1.48, "p95": 4.7, "max": 69.54}
+  },
+  "cleanupVerified": true,
+  "scope": "localhost WebSocket and production MySQL; new-socket restore in the same server process; client runs in the server pod"
+}
