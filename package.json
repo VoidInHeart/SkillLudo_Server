@@ -10,6 +10,7 @@
     "start": "node --env-file-if-exists=.env dist/index.js",
     "test": "tsx --test tests/**/*.test.ts",
     "check": "tsc --noEmit -p tsconfig.json",
+    "check:tests": "tsc --noEmit -p tsconfig.tests.json",
     "contract:sync": "node scripts/sync-client-contract.mjs",
     "contract:check": "node scripts/sync-client-contract.mjs --check",
     "verify:server": "tsx scripts/preview-server.ts",
