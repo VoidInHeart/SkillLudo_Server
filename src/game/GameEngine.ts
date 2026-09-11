@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { PROTOCOL_VERSION, type DiceResult, type DieSelected, type GameSnapshot, type GameState, type MoveResult, type Piece, type PlayerColor } from '../protocol.js';
+import { PROTOCOL_VERSION, type ActionOption, type CommitMoveCommand, type DiceResult, type DieSelected, type GameSnapshot, type GameState, type MoveResult, type Piece, type PlayerColor } from '../protocol.js';
 import type { Room } from '../room/Room.js';
 import { GameRules } from './GameRules.js';
 import { FINAL_PATH_START, MAIN_PATH_LENGTH, getBoardCell } from './PathData.js';
@@ -87,6 +87,32 @@ export class GameEngine {
       return moves.length ? Math.max(...moves.map((move) => (move.reachedFinish ? 100 : 0) + move.killedPieceIds.length * 30 + (move.tookOff ? 20 : 0) + (move.extraTurn ? 15 : 0) + move.toProgress - move.fromProgress)) : -1;
     });
     return scores[1] > scores[0] ? 1 : 0;
+  }
+
+  public getActionOptions(room: Room): ActionOption[] {
+    const game = room.game;
+    if (!game || game.phase !== 'WAIT_SELECT_DIE' || !game.diceChoices) return [];
+    const playerId = room.players[game.currentPlayerIndex].id;
+    return game.diceChoices.map((dice, dieIndex) => {
+      const ids = this.rules.getMovablePieces(game, playerId, dice).map((piece) => piece.id);
+      return { id: `die-${dieIndex}`, dieIndex, dice, label: String(dice), kind: 'STANDARD', extraTurn: dice === 6,
+        movablePieceIds: ids, movePreviews: Object.fromEntries(ids.map((id) => [id, this.rules.calculateMove(game, playerId, id, dice)])) };
+    });
+  }
+
+  /** Validate the entire intent before committing either the die or the aircraft. */
+  public commitMove(room: Room, playerId: string, command: CommitMoveCommand): { selection: DieSelected; move?: MoveResult } {
+    const game = this.requireGame(room);
+    this.assertCurrentPlayer(room, playerId);
+    if (game.phase !== 'WAIT_SELECT_DIE') throw new GameError('INVALID_PHASE');
+    if (command.rollId !== game.rollId) throw new GameError('INVALID_DIE', '投掷已更新，请重新选择');
+    const option = this.getActionOptions(room).find((candidate) => candidate.id === command.optionId);
+    if (!option) throw new GameError('INVALID_DIE');
+    if (command.pieceId ? !option.movablePieceIds.includes(command.pieceId) : option.movablePieceIds.length > 0) {
+      throw new GameError('PIECE_NOT_MOVABLE', '请选择当前点数高亮的飞机');
+    }
+    const selection = this.selectDie(room, playerId, option.dieIndex, command.rollId);
+    return { selection, ...(command.pieceId ? { move: this.selectPiece(room, playerId, command.pieceId) } : {}) };
   }
 
   /** Chooses a server-side AI move without changing the game state. */
@@ -180,7 +206,8 @@ export class GameEngine {
       rankings: [...(game?.rankings ?? [])],
       turnNumber: game?.turnNumber ?? 0,
       movePreviews: game?.phase === 'WAIT_SELECT_PIECE' && game.dice !== null ? Object.fromEntries(game.movablePieceIds.map((id) => [id, this.rules.calculateMove(game, room.players[game.currentPlayerIndex].id, id, game.dice!)])) : {},
-      skills: []
+      skills: [],
+      actionOptions: this.getActionOptions(room)
     };
   }
 

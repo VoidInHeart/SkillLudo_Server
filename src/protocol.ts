@@ -2,7 +2,7 @@
 export type PlayerColor = 'RED' | 'YELLOW' | 'BLUE' | 'GREEN';
 export type PieceState = 'AIRPORT' | 'MAIN_PATH' | 'FINAL_PATH' | 'FINISHED';
 export type RoomStatus = 'WAITING' | 'PLAYING' | 'FINISHED';
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export type GamePhase = 'WAIT_ROLL' | 'WAIT_SELECT_DIE' | 'WAIT_SELECT_PIECE' | 'RESOLVING_MOVE' | 'GAME_OVER';
 export type DicePair = [number, number];
 export type RoomMode = 'PRIVATE' | 'MATCHMAKING';
@@ -17,7 +17,7 @@ export type ClientMessageType =
   | 'AUTH' | 'REGISTER' | 'LOGIN' | 'CREATE_ROOM' | 'JOIN_ROOM' | 'LEAVE_ROOM'
   | 'QUICK_MATCH' | 'CHAT_SEND'
   | 'READY' | 'CANCEL_READY' | 'START_GAME' | 'SET_COLOR_PREFERENCE'
-  | 'ROLL_DICE' | 'SELECT_DIE' | 'SELECT_PIECE' | 'USE_SKILL' | 'PING' | 'RECONNECT'
+  | 'ROLL_DICE' | 'SELECT_DIE' | 'SELECT_PIECE' | 'COMMIT_MOVE' | 'USE_SKILL' | 'PING' | 'RECONNECT'
   | 'CALIBRATION_OPEN' | 'CALIBRATION_SAVE'
   | 'SET_AI_TAKEOVER' | 'EXIT_GAME' | 'REJOIN_GAME';
 
@@ -141,7 +141,22 @@ export interface GameSnapshot {
   turnNumber: number;
   movePreviews: Record<string, MoveResult>;
   skills: PlayerSkillState[];
+  /** Server-calculated choices. Selecting one locally does not mutate the game. */
+  actionOptions?: ActionOption[];
 }
+
+export interface ActionOption {
+  id: string;
+  dieIndex: number;
+  dice: number;
+  label: string;
+  kind: 'STANDARD' | 'UK_PLUS' | 'UK_SUM' | 'CN_SHIFT' | 'FR_RESCUE';
+  delta?: number;
+  extraTurn: boolean;
+  movablePieceIds: string[];
+  movePreviews: Record<string, MoveResult>;
+}
+export interface CommitMoveCommand { roomId: string; rollId: number; optionId: string; pieceId?: string; }
 
 export interface DiceResult { playerId: string; diceChoices: DicePair; rollId: number; }
 export interface DieSelected {

@@ -196,6 +196,7 @@ export class GameWebSocketServer {
       case 'START_GAME': this.startGame(session, roomId, message.requestId); break;
       case 'ROLL_DICE': this.rollDice(session, roomId, message.data, message.requestId); break;
       case 'SELECT_DIE': this.selectDie(session, roomId, message.data, message.requestId); break;
+      case 'COMMIT_MOVE': this.commitMove(session, roomId, message.data, message.requestId); break;
       case 'USE_SKILL': throw new GameError('SKILL_UNAVAILABLE', '本局尚未启用阵营技能');
       case 'SELECT_PIECE': {
         this.assertSessionRoom(session, roomId);
@@ -329,6 +330,23 @@ export class GameWebSocketServer {
     const room = this.rooms.requireRoom(roomId);
     this.assertManualControl(room, session.playerId);
     const result = this.game.selectPiece(room, session.playerId, pieceId);
+    this.publishMove(room, result, requestId);
+    this.log('MOVE_PIECE', room, session, requestId, `piece=${pieceId}`);
+  }
+
+  private commitMove(session: Session, roomId: string, data: unknown, requestId: string): void {
+    this.assertSessionRoom(session, roomId);
+    const room = this.rooms.requireRoom(roomId);
+    this.assertManualControl(room, session.playerId);
+    if (!isRecord(data) || typeof data.rollId !== 'number' || typeof data.optionId !== 'string'
+      || (data.pieceId !== undefined && typeof data.pieceId !== 'string')) throw new GameError('INVALID_MESSAGE');
+    const result = this.game.commitMove(room, session.playerId, { roomId, rollId: data.rollId, optionId: data.optionId, pieceId: data.pieceId as string | undefined });
+    this.broadcast(room, 'DIE_SELECTED', result.selection, requestId);
+    if (result.move) this.publishMove(room, result.move, requestId);
+    else { this.broadcastState(room, requestId); this.scheduleAiTurn(room); }
+  }
+
+  private publishMove(room: Room, result: import('../protocol.js').MoveResult, requestId?: string): void {
     this.broadcast(room, 'MOVE_RESULT', result, requestId);
     const finalSnapshot = this.game.getSnapshot(room);
     if (room.status === 'FINISHED') {
@@ -341,7 +359,6 @@ export class GameWebSocketServer {
       if (!result.extraTurn || result.playerFinished) this.broadcast(room, 'TURN_START', this.turnData(finalSnapshot));
       this.scheduleAiTurn(room);
     }
-    this.log('MOVE_PIECE', room, session, requestId, `piece=${pieceId}`);
   }
 
   private ping(socket: WebSocket, session: Session, roomId: string, requestId: string): void {
