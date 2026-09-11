@@ -56,17 +56,16 @@ test('a moved piece sends opponents on its shared cell back to the airport', () 
   assert.deepEqual(move.killedPieceIds, ['yellow-1']);
 });
 
-test('a wormhole does not jump, but can capture on its third square before exit', () => {
+test('direct wormhole entry jumps once after exit and never captures the ordinary cells beneath it', () => {
   const rules = new GameRules();
   const moving = airportPiece({ state: 'MAIN_PATH', progress: 17 });
-  // Red progress 27 is the third cell before the wormhole exit at progress 30.
-  // Yellow progress 1 resolves to the same clockwise shared board cell.
+  // Red progress 27 lies under the flight arc and is never a collision point.
   const victim = airportPiece({ id: 'yellow-1', playerId: 'p2', color: 'YELLOW', state: 'MAIN_PATH', progress: 1 });
   const move = rules.calculateMove(gameWith(moving, victim), 'p1', 'red-1', 1);
-  assert.equal(move.jumped, false);
+  assert.equal(move.jumped, true);
   assert.equal(move.usedFlightPath, true);
-  assert.equal(move.toProgress, 30);
-  assert.deepEqual(move.killedPieceIds, ['yellow-1']);
+  assert.equal(move.toProgress, 34);
+  assert.deepEqual(move.killedPieceIds, []);
 });
 
 test('the first player with four completed planes wins the game immediately', () => {

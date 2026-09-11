@@ -106,7 +106,7 @@ test('same-colour jumps, flight entrances, runway turns and bounce agree for all
     assert.deepEqual(throughJump.segments.map((s) => s.kind), ['WALK', 'JUMP', 'FLIGHT']);
     assert.equal(throughJump.toProgress, 30);
     piece.progress = 17;
-    assert.deepEqual(rules.calculateMove(game, 'a', piece.id, 1).segments.map((s) => s.kind), ['WALK', 'FLIGHT']);
+    assert.deepEqual(rules.calculateMove(game, 'a', piece.id, 1).segments.map((s) => s.kind), ['WALK', 'FLIGHT', 'JUMP']);
     piece.progress = 50;
     assert.equal(rules.calculateMove(game, 'a', piece.id, 1).toProgress, FINAL_PATH_START);
     assert.equal(getBoardCell(color, FINAL_PATH_START), `F-${color}-0`);

@@ -29,8 +29,8 @@ const fixtures = [];
   fixtures.push({ name: 'britain', playerId: 'RED', snapshot, effect, after: s.engine.getSnapshot(s.room) });
 }
 {
-  const s = setup('BLUE'); s.at('blue-1', 2); s.game.rolledTotal = 51; refreshAwakening(s.room);
-  Object.assign(faction(s.room, 'BLUE'), { energy: 3, level: 2 }); s.engine.rollDice(s.room, 'BLUE', 4);
+  const s = setup('BLUE'); s.at('blue-1', 2); s.game.rolledTotal = 101; refreshAwakening(s.room);
+  Object.assign(faction(s.room, 'BLUE'), { energy: 3, level: 3 }); s.engine.rollDice(s.room, 'BLUE', 4);
   const snapshot = s.engine.getSnapshot(s.room);
   const move = s.engine.commitMove(s.room, 'BLUE', { roomId: s.room.roomId, rollId: s.game.rollId, optionId: 'cn-0--2', pieceId: 'blue-1' }).move;
   fixtures.push({ name: 'china', playerId: 'BLUE', snapshot, move, after: s.engine.getSnapshot(s.room) });

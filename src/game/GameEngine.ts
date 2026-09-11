@@ -4,7 +4,7 @@ import type { Room } from '../room/Room.js';
 import { GameRules } from './GameRules.js';
 import { FINAL_PATH_START, MAIN_PATH_LENGTH, getBoardCell, getPieceCell, positionOnRing } from './PathData.js';
 import { assignColors } from '../room/ColorAssignment.js';
-import { actionSpecs, activeAtCell, beginNormalTurn, consumeAction, faction, initializeFactions, publicSkills, refreshAwakening } from './SkillState.js';
+import { actionSpecs, activeAtCell, beginNormalTurn, consumeAction, faction, initializeFactions, publicSkills, refreshAwakening, refreshStoredCharge } from './SkillState.js';
 
 const GAME_COLORS: PlayerColor[] = ['RED', 'YELLOW', 'BLUE', 'GREEN'];
 
@@ -253,7 +253,7 @@ export class GameEngine {
     if (command.skillId === 'cn-upgrade') {
       state.energy -= 3; state.level += 1;
       if (state.level === 1) { state.forcedDelta = 0; state.pendingDelta = 0; }
-      if (state.level === 3) state.readyAtTurn = Math.max(state.normalTurns, state.readyAtTurn - 1);
+      refreshStoredCharge(state);
       return { effect: { skillId: command.skillId, playerId, message: `尺有所长强化至第 ${state.level} 重` } };
     }
     if (command.skillId === 'us-bomb') {

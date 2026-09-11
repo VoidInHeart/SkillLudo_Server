@@ -74,19 +74,19 @@ test('S04: wormhole preview is pure and execution captures only the declared opp
   const before = structuredClone(game);
   const preview = engine.getSnapshot(room).movePreviews['green-1'];
   assert.deepEqual(game, before);
-  assert.deepEqual(preview.segments.map((s) => s.kind), ['WALK', 'FLIGHT']);
-  assert.deepEqual(preview.captures, [{ pieceId: 'blue-2', atProgress: 30 }, { pieceId: 'blue-1', atProgress: 27 }]);
+  assert.deepEqual(preview.segments.map((s) => s.kind), ['WALK', 'FLIGHT', 'JUMP']);
+  assert.deepEqual(preview.captures, [{ pieceId: 'blue-2', atProgress: 30 }]);
   const result = engine.selectPiece(room, 'a', 'green-1');
   const { captureOutcomes, extraTurn, ...movement } = result;
   const { extraTurn: previewExtra, ...predictedMovement } = preview;
   assert.deepEqual(movement, predictedMovement);
   assert.equal(extraTurn, true, 'American captures grant an immediate extra action');
-  assert.equal(captureOutcomes?.length, 2);
-  for (const id of ['blue-1', 'blue-2']) {
+  assert.equal(captureOutcomes?.length, 1);
+  for (const id of ['blue-2']) {
     assert.equal(game.pieces.find((p) => p.id === id)!.state, 'MAIN_PATH');
     assert.equal(game.pieces.find((p) => p.id === id)!.progress, 0);
   }
-  for (const id of ['green-2', 'blue-3']) assert.deepEqual(game.pieces.find((p) => p.id === id), before.pieces.find((p) => p.id === id));
+  for (const id of ['green-2', 'blue-1', 'blue-3']) assert.deepEqual(game.pieces.find((p) => p.id === id), before.pieces.find((p) => p.id === id));
 });
 
 test('S05: takeoff and private runways do not capture opponents with the same relative progress', () => {

@@ -167,6 +167,7 @@ export interface ActionOption {
   kind: 'STANDARD' | 'UK_PLUS' | 'UK_SUM' | 'CN_SHIFT' | 'FR_RESCUE';
   delta?: number;
   mandatory?: boolean;
+  usesStoredCharge?: boolean;
   extraTurn: boolean;
   movablePieceIds: string[];
   movePreviews: Record<string, MoveResult>;
@@ -189,10 +190,12 @@ export interface SkillCommand { roomId: string; skillId: string; targetPieceId?:
 export interface PlayerSkillState {
   playerId: string; skillId: string; charges: number; cooldownTurns: number;
   available?: boolean; awakened?: boolean; progress?: number; energy?: number; level?: number; forcedDelta?: number; reason?: string;
+  storedCharge?: boolean; usedThisTurn?: boolean;
 }
 export interface FactionRuntime {
   normalTurns: number; rolledThisTurn: boolean; awakened: boolean; limitedUsed: boolean;
   energy: number; level: number; readyAtTurn: number; forcedDelta: number; pendingDelta: number;
+  storedCharge?: boolean; lastScaleTurn?: number; scaleUsedTurn?: number;
 }
 export interface CaptureOutcome { pieceId: string; outcome: 'AIRPORT' | 'TAKEOFF' | 'LOCKED'; before: Piece; after: Piece; }
 export interface CaptureReaction { id: number; playerId: string; pieceIds: string[]; capacity: number; expiresAt: number; }

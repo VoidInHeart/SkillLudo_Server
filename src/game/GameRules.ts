@@ -68,11 +68,19 @@ export class GameRules {
         usedFlightPath = true;
       }
     }
+    // A turn may use one same-colour jump. A direct wormhole entry saves that
+    // jump for the exit; jumping onto the entrance already spends it.
+    if (usedFlightPath && !jumped && isSameColorMainCell(piece.color, progress) && progress + SAME_COLOR_JUMP_STEPS < FINAL_PATH_START) {
+      const target = progress + SAME_COLOR_JUMP_STEPS;
+      segments.push({ kind: 'JUMP', fromProgress: progress, toProgress: target, path: [target] });
+      path.push(target); progress = target; jumped = true;
+    }
 
     const reachedFinish = progress === FINISH_PROGRESS;
-    // A wormhole is not a jump. While flying through it, the plane also checks
-    // the third square before the exit, as required by the board rule.
-    const collisionProgresses = options.noCapture || dice === 0 ? [] : usedFlightPath ? [progress, progress - 3] : [progress];
+    // The wormhole only touches its two endpoints. Ordinary cells under the
+    // flight arc never collide. A remaining jump can also capture at its landing.
+    const flight = segments.find((segment) => segment.kind === 'FLIGHT');
+    const collisionProgresses = options.noCapture || dice === 0 ? [] : Array.from(new Set(flight ? [flight.fromProgress, flight.toProgress, progress] : [progress]));
     const captures = collisionProgresses.flatMap((atProgress) => this.findCollisions(game, piece, [atProgress]).map((pieceId) => ({ pieceId, atProgress })));
     const killedPieceIds = [...new Set(captures.map((capture) => capture.pieceId))];
     return {

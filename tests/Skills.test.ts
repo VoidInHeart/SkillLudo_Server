@@ -5,9 +5,62 @@ import { GameRules } from '../src/game/GameRules.js';
 import { RoomManager } from '../src/room/RoomManager.js';
 import { beginNormalTurn, faction, refreshAwakening } from '../src/game/SkillState.js';
 import { getBoardCell, getPieceCell, positionOnRing } from '../src/game/PathData.js';
+import { describeSkill } from '../src/game/SkillCatalog.js';
 import type { PlayerColor, SkillCommand } from '../src/protocol.js';
 
 const colors: PlayerColor[] = ['RED', 'YELLOW', 'BLUE', 'GREEN'];
+
+test('L01: wormholes capture endpoints only, and share a single jump budget on all four routes', () => {
+  for (const color of colors) for (const start of [13, 17]) {
+    const s = setup(color), enemy = color === 'BLUE' ? 'RED' : 'BLUE';
+    s.at(color, start);
+    [18, 27, 30, 34].forEach((progress, index) => Object.assign(s.at(enemy, 1, index + 1), positionOnRing(enemy, getBoardCell(color, progress)!)));
+    const move = new GameRules().calculateMove(s.game, color, s.piece(color).id, 1);
+    assert.deepEqual(move.segments.map((segment) => segment.kind), start === 13 ? ['WALK', 'JUMP', 'FLIGHT'] : ['WALK', 'FLIGHT', 'JUMP']);
+    assert.equal(move.toProgress, start === 13 ? 30 : 34);
+    assert.deepEqual(move.captures.map((capture) => capture.atProgress), start === 13 ? [18, 30] : [18, 30, 34]);
+    assert.ok(!move.killedPieceIds.includes(s.piece(enemy, 2).id));
+  }
+});
+
+test('L02: modified sixes never repeat, while an unmodified rolled six still does', () => {
+  for (const color of ['RED', 'BLUE'] as const) {
+    const s = setup(color); s.at(color, 1); faction(s.room, color).awakened = true; s.roll(5, 6);
+    const id = color === 'RED' ? 'uk-plus-0' : 'cn-0-1';
+    const option = s.engine.getActionOptions(s.room).find((o) => o.id === id)!;
+    assert.equal(option.dice, 6); assert.equal(option.extraTurn, false);
+    assert.equal(s.engine.getActionOptions(s.room).find((o) => o.id === 'die-1')!.extraTurn, true);
+    assert.equal(s.commit(id, s.piece(color).id).move!.extraTurn, false);
+  }
+});
+
+test('L03: China stores at most one charge after three unused turns; spending it preserves CD and limits the whole turn', () => {
+  const s = setup('BLUE'); s.at('BLUE', 1);
+  const state = faction(s.room, 'BLUE'); Object.assign(state, { awakened: true, level: 2 });
+  beginNormalTurn(s.room, 'BLUE'); beginNormalTurn(s.room, 'BLUE'); assert.ok(!state.storedCharge);
+  beginNormalTurn(s.room, 'BLUE'); assert.equal(state.storedCharge, true);
+  state.readyAtTurn = 9; s.roll(5, 6);
+  const options = s.engine.getActionOptions(s.room);
+  assert.ok(options.some((o) => o.usesStoredCharge));
+  assert.ok(options.filter((o) => o.kind === 'CN_SHIFT').every((o) => o.usesStoredCharge && Math.abs(o.delta!) === 1));
+  s.commit('cn-stored-0-1', s.piece('BLUE').id);
+  assert.equal(state.readyAtTurn, 9); assert.equal(state.storedCharge, false); assert.equal(state.lastScaleTurn, 4);
+  s.turn('BLUE'); s.roll(6); state.storedCharge = true;
+  assert.ok(s.engine.getActionOptions(s.room).every((o) => o.kind === 'STANDARD'), 'neither saved nor normal skill can be used twice in the same normal turn');
+  state.storedCharge = false;
+  beginNormalTurn(s.room, 'BLUE'); beginNormalTurn(s.room, 'BLUE'); assert.equal(state.storedCharge, false);
+  beginNormalTurn(s.room, 'BLUE'); assert.equal(state.storedCharge, true);
+  beginNormalTurn(s.room, 'BLUE'); assert.equal(state.storedCharge, true);
+});
+
+test('L04: upgraded Chinese descriptions match the actual range, stored charge and unchanged cooldown', () => {
+  assert.match(describeSkill('cn-scale', { level: 0 }), /必须反向/);
+  assert.match(describeSkill('cn-scale', { level: 1 }), /已免除/);
+  assert.match(describeSkill('cn-scale', { level: 2 }), /储备一次/);
+  assert.doesNotMatch(describeSkill('cn-scale', { level: 2 }), /调整 -2/);
+  assert.match(describeSkill('cn-scale', { level: 3 }), /调整 -2/);
+  assert.match(describeSkill('cn-scale', { level: 3 }), /冷却 3/);
+});
 function setup(current: PlayerColor = 'RED') {
   let second = 1;
   const rooms = new RoomManager();
@@ -35,7 +88,7 @@ function setup(current: PlayerColor = 'RED') {
 
 test('K01: awakening thresholds use raw dice and permanently unlock each faction', () => {
   const s = setup();
-  s.game.rolledTotal = 48; s.roll(1, 1);
+  s.game.rolledTotal = 98; s.roll(1, 1);
   assert.equal(faction(s.room, 'BLUE').awakened, false);
   s.commit('die-0'); s.roll(1, 1);
   assert.equal(faction(s.room, 'BLUE').awakened, true);
@@ -145,7 +198,7 @@ test('K08: Paris rescues every unlocked plane once, without captures, before the
 });
 
 test('K09: Chinese cooldown counts normal turns and the next normal action must reverse direction', () => {
-  const s = setup('BLUE'); s.game.rolledTotal = 51; s.at('BLUE', 1); s.roll(3);
+  const s = setup('BLUE'); s.game.rolledTotal = 101; s.at('BLUE', 1); s.roll(3);
   s.commit('cn-0-1', s.piece('BLUE').id);
   const state = faction(s.room, 'BLUE'); assert.equal(state.pendingDelta, -1); assert.equal(state.readyAtTurn, 4);
   beginNormalTurn(s.room, 'BLUE'); s.turn('BLUE'); s.roll(1, 2);
@@ -172,9 +225,9 @@ test('K10: Chinese capture returns to takeoff, caps energy and supports all thre
   s.skill('cn-upgrade'); assert.equal(state.level, 1); assert.equal(state.pendingDelta, 0); assert.equal(state.energy, 0);
   state.energy = 3; s.skill('cn-upgrade'); s.roll(1, 6);
   const options = s.engine.getActionOptions(s.room);
-  assert.ok(options.some((o) => o.delta === 2)); assert.ok(options.some((o) => o.delta === -2)); assert.ok(options.every((o) => o.dice >= 0));
+  assert.ok(options.every((o) => Math.abs(o.delta ?? 0) <= 1)); assert.ok(options.every((o) => o.dice >= 0));
   state.energy = 3; s.skill('cn-upgrade'); s.commit('cn-1-2', s.piece('BLUE').id);
-  assert.equal(state.level, 3); assert.equal(state.readyAtTurn - state.normalTurns, 2); assert.equal(state.pendingDelta, 0);
+  assert.equal(state.level, 3); assert.equal(state.readyAtTurn - state.normalTurns, 3); assert.equal(state.pendingDelta, 0);
 });
 
 test('K11: nuclear range wraps, includes allies and locks, and excludes private cells', () => {
