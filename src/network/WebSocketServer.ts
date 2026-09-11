@@ -466,6 +466,7 @@ export class GameWebSocketServer {
     this.send(socket, 'GAME_EXITED', { roomId }, requestId);
     this.send(socket, 'ACTIVE_GAMES', { games: this.activeGamesFor(session.playerId) });
     this.scheduleAiTurn(room);
+    this.scheduleReaction(room);
     this.finishIfNoHumans(room, true);
   }
 
@@ -529,6 +530,7 @@ export class GameWebSocketServer {
           this.broadcast(room, 'PLAYER_DISCONNECTED', { playerId: player.id });
           if (newlyControlled) this.broadcastSystem(room, `${player.nickname} 已断线，由AI托管`);
           this.scheduleAiTurn(room);
+          this.scheduleReaction(room);
         }
       }
       this.finishIfNoHumans(room, false, now);

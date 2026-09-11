@@ -64,15 +64,15 @@ Remove-Item Env:MYSQL_ROOT_PASSWORD
 
 数据表包括 `users`、`user_sessions`、`player_profiles` 和预留的 `game_records`。口令使用 Node `scrypt` 加盐哈希；数据库只保存会话令牌的 SHA-256 摘要。
 
-## 协议 v2 与规则
+## 协议 v3 与规则
 
 - `AUTH`：开发环境使用持久化 `guestId` 换取/恢复 `sessionId`；正式账号可使用 `REGISTER` / `LOGIN`。
 - `CREATE_ROOM`、`JOIN_ROOM`、`LEAVE_ROOM`：2–4 人、六位数房间号。
 - `READY`、`CANCEL_READY`、`START_GAME`：房主在所有当前玩家准备后开局。
 - `SET_COLOR_PREFERENCE { roomId, color }`：`color` 为四种颜色或 `null`；只在房间等待时可改，修改会取消本人的准备。开局按颜色意愿抽签后创建棋子。
-- `ROLL_DICE → WAIT_SELECT_DIE → SELECT_DIE { roomId, dieIndex, rollId } → WAIT_SELECT_PIECE → SELECT_PIECE { roomId, pieceId, rollId }`：服务端生成两枚骰子，选择索引 0/1；点数不相加，5/6 起飞，所选 6 连投。两个点数一样也只选一个；无棋可走则换人。
+- `ROLL_DICE → WAIT_SELECT_DIE → COMMIT_MOVE { roomId, rollId, optionId, pieceId? }`：快照提供 `actionOptions` 的步数、合法飞机和预览。前端可任意切换预选，点击飞机一次验证并提交；只有所选方案无合法飞机时允许省略 pieceId 跳过。默认单骰 5/6 起飞、有效 6 连投；英国觉醒可合计相同双骰且不连投。旧 `SELECT_DIE / SELECT_PIECE` 供托管分步执行及重连兼容。
 - `QUICK_MATCH`：暂时返回 `MATCHMAKING_DISABLED`。未来匹配房间使用 `MATCHMAKING` 模式，分配颜色忽略意愿。
-- `USE_SKILL`：预留命令和技能窗口/状态，当前所有阵营技能为空，返回 `SKILL_UNAVAILABLE`。
+- `USE_SKILL { roomId, rollId, skillId, targetPieceIds?, targetCell?, reactionId? }`：英国换位、法国救援/受击响应、中国强化、美国轰炸。改点技能通过 `COMMIT_MOVE` 的服务器选项执行，不能直接传自定义步数。技能变化广播 `SKILL_EFFECT`；受击响应使用 `WAIT_REACTION`，15 秒默认不锁定。
 - `PING`、`RECONNECT`：45 秒心跳检测、session 重连、`GAME_STATE` 完整快照恢复。
 
 `src/game/GameRules.ts` 不依赖 WebSocket 或 Node UI，可独立测试：
@@ -83,13 +83,17 @@ npm run check
 npm run contract:check
 ```
 
-`src/protocol.ts` 与 `src/game/PathData.ts` 是两仓共享契约的源文件。修改后执行 `npm run contract:sync`，在前后端分别提交，再运行 `contract:check`；客户端镜像文件不要手改。协议 v2 与旧客户端不兼容，旧内存棋局不迁移，升级应结束旧局并成对发布两端。
+`src/protocol.ts`、`src/game/PathData.ts` 与 `src/game/SkillCatalog.ts` 是两仓共享契约的源文件。修改后执行 `npm run contract:sync`，在前后端分别提交，再运行 `contract:check`；客户端镜像文件不要手改。协议 v3 与旧客户端不兼容，旧内存棋局不迁移，升级应成对发布两端。服务器 CI 中客户端 ref 必须固定到对应协议提交。
 
 原图路径：起飞位置为进度 0，主环进度 1–50，私人跑道 51–56；同色格为进度 2 mod 4；虫洞 18→30，支持同色跳跃 14→18 后进入虫洞。服务器给出 `movePreviews`、移动段 `segments` 和撞击位置 `captures`，客户端只播放这些结果。
 
 颜色分配实现位于 `src/room/ColorAssignment.ts`：每种有人期望的颜色在该颜色候选者中等概率选一人；没有期望和未中签的玩家，与剩余颜色分别洗牌后配对。每人最多选一种颜色，因此该算法满足的意愿数就是被期望的不同颜色数，达到最大值。已穷举全部 625 种四人意愿组合，并验证每个冲突候选者都有中签机会。
 
-技能扩展入口为 `src/game/FactionSkills.ts`，已定义阵营、次数、冷却、允许窗口和激活验证。后续具体技能需要在服务端实现效果结算与状态写入，然后随快照广播，不能由客户端动画修改规则状态。
+技能目录在 `src/game/SkillCatalog.ts`，`SkillState.ts` 管理觉醒、CD、能量、强制后续效果和改点选项，`GameEngine.ts` 验证/结算技能与受击响应。CD 按己方正常回合计，连投不刷新；中国觉醒累积所有原始双骰总和，严格超过 50；美国每击落一架敌机追加一组双骰。AI/托管不发动任何可选技能（包括法国锁定、中国强化），自动被动和既存强制反向照常结算。
+
+英国仅交换公共航线的未锁定飞机，换入返家缺口以 `detour` 标记绕行；法国锁定最多两架，清格后选原始 3/4 解锁移动；救援逐机减一步、无击落、无连投，之后回到正常投骰。中国被击落回起飞处、能量上限 3，三次强化依次去强制、扩至 ±2、CD 减 1；美国轰炸主环指定格及前后各两格，含友机/锁定飞机，排除私有路线。
+
+`npm test` 当前 54 项回归；`npm run verify:skill-fixtures` 导出五组权威计算场景到相邻客户端，配合客户端 `verify:skills` 检查正式构建的点击和动画。夹具脚本只在本机测试进程内设置场景，不增加生产接口。
 
 浏览器验收专用服务执行 `npm run verify:server`，默认端口 3101、不需要 MySQL；它仅供开发，与正常数据库账号服务分离。阶段提交与恢复点见 `docs/重构进度日志.md`。
 

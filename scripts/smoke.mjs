@@ -47,13 +47,20 @@ try {
   const roll = await request(a, 'ROLL_DICE', { roomId }, 'DICE_RESULT');
   assert.equal(roll.diceChoices.length, 2);
   const dieIndex = roll.diceChoices[1] > roll.diceChoices[0] ? 1 : 0;
-  const choice = await request(a, 'SELECT_DIE', { roomId, dieIndex, rollId: roll.rollId }, 'DIE_SELECTED');
+  const preview = await request(a, 'RECONNECT', { roomId }, 'GAME_STATE');
+  assert.equal(preview.protocolVersion, 3);
+  assert.equal(preview.phase, 'WAIT_SELECT_DIE');
+  const option = preview.actionOptions.find((candidate) => candidate.dieIndex === dieIndex && candidate.kind === 'STANDARD');
+  const pieceId = option.movablePieceIds[0];
+  const choice = await request(a, 'COMMIT_MOVE', { roomId, optionId: option.id, rollId: roll.rollId, ...(pieceId ? { pieceId } : {}) }, 'DIE_SELECTED');
   assert.equal(choice.dice, roll.diceChoices[dieIndex]);
-  if (choice.movablePieceIds.length) await request(a, 'SELECT_PIECE', { roomId, pieceId: choice.movablePieceIds[0], rollId: roll.rollId }, 'MOVE_RESULT');
+  const after = await request(a, 'RECONNECT', { roomId }, 'GAME_STATE');
+  assert.equal(after.phase, 'WAIT_ROLL');
+  if (pieceId) assert.equal(after.pieces.find((piece) => piece.id === pieceId).progress, 0);
   // Leave explicitly, then wait for a subsequent heartbeat to ensure both commands were processed.
   for (const socket of peers) {
     socket.send(JSON.stringify({ type: 'LEAVE_ROOM', requestId: `smoke-leave-${++sequence}`, data: { roomId } }));
     await request(socket, 'PING', {}, 'PONG');
   }
-  console.log(JSON.stringify({ result: 'passed', revision: status.revision, checks: ['readiness', 'auth', 'heartbeat', 'room', 'preferences', 'dual-dice', 'selection', 'cleanup'] }));
+  console.log(JSON.stringify({ result: 'passed', revision: status.revision, checks: ['readiness', 'auth', 'heartbeat', 'room', 'preferences', 'dual-dice', 'v3 atomic selection/move or pass', 'cleanup'] }));
 } finally { peers.forEach((socket) => socket.close()); }

@@ -14,6 +14,7 @@
     "contract:sync": "node scripts/sync-client-contract.mjs",
     "contract:check": "node scripts/sync-client-contract.mjs --check",
     "verify:server": "tsx scripts/preview-server.ts",
+    "verify:skill-fixtures": "tsx scripts/export-skill-fixtures.ts",
     "db:bootstrap": "node --env-file-if-exists=.env scripts/bootstrap-database.mjs"
   },
   "dependencies": {

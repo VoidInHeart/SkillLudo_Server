@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: VoidInHeart/SkillLudo_Client
-          ref: 6a8c4c85abd900d7b6b60ade69bc713282257610
+          ref: 3aa8a94eb4059a1912dba2f89a58e6394f48529b
           path: SkillLudo_Client
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
