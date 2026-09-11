@@ -86,6 +86,90 @@ function setup(current: PlayerColor = 'RED') {
   return { room, game, engine, turn, piece, at, roll, commit, skill };
 }
 
+test('U01: Britain may bind once before awakening without counting as a kill', () => {
+  const s = setup('GREEN'); s.at('GREEN', 4);
+  Object.assign(s.at('RED', 1), positionOnRing('RED', getBoardCell('GREEN', 5)!));
+  s.roll(1); const pending = s.commit('die-0', s.piece('GREEN').id).move!;
+  assert.equal(pending.pendingReaction, true); assert.equal(s.game.reaction?.kind, 'UK_BIND');
+  assert.throws(() => s.skill('fr-lock', { reactionId: s.game.reaction!.id }, 'RED'));
+  const result = s.skill('uk-bind', { reactionId: s.game.reaction!.id, targetPieceIds: [s.piece('RED').id] }, 'RED').move!;
+  assert.equal(s.piece('RED').boundTo, s.piece('GREEN').id);
+  assert.equal(getPieceCell(s.piece('RED')), getPieceCell(s.piece('GREEN')));
+  assert.equal(faction(s.room, 'RED').appleUsed, true);
+  assert.equal(faction(s.room, 'RED').limitedUsed, false);
+  assert.deepEqual(result.killedPieceIds, []); assert.equal(result.extraTurn, false);
+  assert.equal(result.carriedPieces?.length, 1);
+});
+
+test('U02: binding at a wormhole entrance follows the remainder of that same move', () => {
+  const s = setup('GREEN'); s.at('GREEN', 17);
+  Object.assign(s.at('RED', 1), positionOnRing('RED', getBoardCell('GREEN', 18)!));
+  s.roll(1); s.commit('die-0', s.piece('GREEN').id);
+  const result = s.skill('uk-bind', { reactionId: s.game.reaction!.id, targetPieceIds: [s.piece('RED').id] }, 'RED').move!;
+  assert.equal(s.piece('GREEN').progress, 34); assert.equal(s.piece('RED').progress, 47);
+  assert.equal(result.carriedPieces![0].before.progress, 31);
+  assert.equal(getPieceCell(s.piece('RED')), getPieceCell(s.piece('GREEN')));
+});
+
+test('U03: passengers stop at their own crossed checkpoint or before the carrier private runway', () => {
+  for (const [color, start, expected] of [['GREEN', 36, 50], ['BLUE', 49, 37]] as const) {
+    const s = setup(color), carrier = s.at(color, start), passenger = s.at('RED', 1);
+    Object.assign(passenger, positionOnRing('RED', getPieceCell(carrier)!), { boundTo: carrier.id });
+    s.roll(2); const result = s.commit('die-0', carrier.id).move!;
+    assert.equal(passenger.boundTo, undefined); assert.equal(passenger.progress, expected);
+    assert.equal(passenger.state, 'MAIN_PATH'); assert.equal(result.carriedPieces?.length, 1);
+  }
+});
+
+test('U04: British planes cannot kill their carrier; a third party kills both and curses Britain once', () => {
+  const s = setup('RED'), carrier = s.at('GREEN', 5), passenger = s.at('RED', 18);
+  passenger.boundTo = carrier.id; s.at('RED', 17, 2); s.roll(1);
+  assert.deepEqual(s.commit('die-0', s.piece('RED', 2).id).move!.killedPieceIds, []);
+  s.turn('BLUE'); s.at('BLUE', 30); s.roll(1);
+  const result = s.commit('die-0', s.piece('BLUE').id).move!;
+  assert.deepEqual(new Set(result.killedPieceIds), new Set([carrier.id, passenger.id]));
+  assert.equal(passenger.state, 'AIRPORT'); assert.equal(passenger.cursed, true); assert.equal(carrier.cursed, undefined);
+  s.turn('RED'); s.roll(6); s.commit('die-0', passenger.id);
+  assert.equal(passenger.progress, 0); assert.equal(passenger.cursed, true);
+  s.roll(6); const cursedMove = s.commit('die-0', passenger.id).move!;
+  assert.equal(cursedMove.effectiveDice, 1); assert.equal(cursedMove.extraTurn, false);
+  assert.equal(passenger.progress, 1); assert.equal(passenger.cursed, false);
+});
+
+test('U05: actively moving a bound plane releases it, and AI/awakened/spent Britain never opens a binding choice', () => {
+  const s = setup('RED'); s.at('GREEN', 5); const p = s.at('RED', 18); p.boundTo = s.piece('GREEN').id;
+  s.roll(1); s.commit('die-0', p.id); assert.equal(p.boundTo, undefined); assert.equal(p.progress, 19);
+  for (const mode of ['ai', 'awake', 'spent']) {
+    const t = setup('GREEN'); t.at('GREEN', 4); t.at('RED', 18);
+    if (mode === 'ai') t.room.players[0].aiControlled = true;
+    if (mode === 'awake') faction(t.room, 'RED').awakened = true;
+    if (mode === 'spent') faction(t.room, 'RED').appleUsed = true;
+    t.roll(1); assert.ok(!t.commit('die-0', t.piece('GREEN').id).move!.pendingReaction);
+    assert.equal(t.piece('RED').state, 'AIRPORT');
+  }
+});
+
+test('U06: French and British reaction decisions are collected before any move resolves', () => {
+  const s = setup('GREEN'); s.at('GREEN', 17);
+  Object.assign(s.at('RED', 1), positionOnRing('RED', getBoardCell('GREEN', 18)!));
+  Object.assign(s.at('YELLOW', 1), positionOnRing('YELLOW', getBoardCell('GREEN', 30)!));
+  s.roll(1); s.commit('die-0', s.piece('GREEN').id);
+  assert.equal(s.skill('uk-bind', { reactionId: s.game.reaction!.id, targetPieceIds: [s.piece('RED').id] }, 'RED').pending, true);
+  assert.equal(s.piece('GREEN').progress, 17); assert.equal(s.game.reaction?.kind, 'FR_LOCK');
+  const result = s.skill('fr-lock', { reactionId: s.game.reaction!.id, targetPieceIds: [s.piece('YELLOW').id] }, 'YELLOW').move!;
+  assert.equal(s.piece('RED').boundTo, s.piece('GREEN').id); assert.equal(s.piece('YELLOW').locked, true);
+  assert.equal(result.captureOutcomes?.length, 1); assert.equal(s.game.phase, 'WAIT_ROLL');
+});
+
+test('U07: destroying a Chinese carrier triggers both its passive and two American kill rewards', () => {
+  const s = setup('GREEN'), carrier = s.at('BLUE', 1), passenger = s.at('RED', 1);
+  Object.assign(carrier, positionOnRing('BLUE', getBoardCell('GREEN', 5)!));
+  Object.assign(passenger, positionOnRing('RED', getPieceCell(carrier)!), { boundTo: carrier.id });
+  s.at('GREEN', 4); s.roll(1); const result = s.commit('die-0', s.piece('GREEN').id).move!;
+  assert.equal(carrier.progress, 0); assert.equal(faction(s.room, 'BLUE').energy, 1);
+  assert.equal(passenger.cursed, true); assert.equal(result.extraTurn, true); assert.equal(s.game.extraRolls, 1);
+});
+
 test('K01: awakening thresholds use raw dice and permanently unlock each faction', () => {
   const s = setup();
   s.game.rolledTotal = 98; s.roll(1, 1);

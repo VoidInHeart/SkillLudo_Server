@@ -1,4 +1,5 @@
 import type { GameState, MoveResult, MoveSegment, Piece } from '../protocol.js';
+import { captureGroup, protectedFromCollision } from './BoundPieces.js';
 import {
   FINAL_PATH_START, FINISH_PROGRESS, FLIGHT_STEPS,
   SAME_COLOR_JUMP_STEPS, getBoardCell, getPieceCell, isFlightTrigger, isSameColorMainCell
@@ -24,6 +25,8 @@ export class GameRules {
 
   public calculateMove(game: GameState, playerId: string, pieceId: string, dice: number, options: { noCapture?: boolean } = {}): MoveResult {
     const piece = game.pieces.find((candidate) => candidate.id === pieceId && candidate.playerId === playerId);
+    const forcedByCurse = !!piece?.cursed && piece.state !== 'AIRPORT';
+    if (forcedByCurse) dice = 1;
     if (!piece || !this.canMove(piece, dice)) throw new Error('PIECE_NOT_MOVABLE');
 
     const fromProgress = piece.progress;
@@ -82,7 +85,12 @@ export class GameRules {
     const flight = segments.find((segment) => segment.kind === 'FLIGHT');
     const collisionProgresses = options.noCapture || dice === 0 ? [] : Array.from(new Set(flight ? [flight.fromProgress, flight.toProgress, progress] : [progress]));
     const captures = collisionProgresses.flatMap((atProgress) => this.findCollisions(game, piece, [atProgress]).map((pieceId) => ({ pieceId, atProgress })));
-    const killedPieceIds = [...new Set(captures.map((capture) => capture.pieceId))];
+    const killedPieceIds = captureGroup(game, captures.map((capture) => capture.pieceId));
+    for (const id of killedPieceIds) if (!captures.some((c) => c.pieceId === id)) {
+      const carrierId = game.pieces.find((p) => p.id === id)?.boundTo;
+      const hit = captures.find((c) => c.pieceId === carrierId);
+      if (hit) captures.push({ pieceId: id, atProgress: hit.atProgress });
+    }
     return {
       pieceId,
       fromProgress,
@@ -96,7 +104,8 @@ export class GameRules {
       killedPieceIds,
       reachedFinish,
       playerFinished: false,
-      extraTurn: dice === 6,
+      extraTurn: !forcedByCurse && dice === 6,
+      effectiveDice: dice,
       ...(piece.detour ? { fromDetour: true, toDetour: progress <= 0 } : {})
     };
   }
@@ -109,6 +118,7 @@ export class GameRules {
     if (destinations.size === 0) return [];
     return game.pieces
       .filter((piece) => piece.playerId !== movingPiece.playerId && piece.state === 'MAIN_PATH' && !piece.locked)
+      .filter((piece) => !protectedFromCollision(game, movingPiece, piece))
       .filter((piece) => destinations.has(getPieceCell(piece) ?? ''))
       .map((piece) => piece.id);
   }

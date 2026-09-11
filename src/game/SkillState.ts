@@ -80,13 +80,14 @@ export function publicSkills(room: Room): PlayerSkillState[] {
     const ordinaryWindow = ['WAIT_ROLL', 'WAIT_SELECT_DIE'].includes(game.phase) && !game.rescue;
     const locked = game.pieces.filter((p) => p.playerId === player.id && p.locked).length;
     return SKILL_CATALOG.filter((skill) => skill.color === player.color).map((skill) => {
-      const available = manual && (skill.id === 'uk-sun' ? game.phase === 'WAIT_SELECT_DIE' && !state.limitedUsed && !game.rescue && (game.diceChoices?.reduce((a, b) => a + b, 0) ?? 0) >= 10
+      const available = (skill.id === 'uk-apple' || skill.id === 'fr-tradition') ? game.reaction?.playerId === player.id && !player.isBot && !player.aiControlled
+        : manual && (skill.id === 'uk-sun' ? game.phase === 'WAIT_SELECT_DIE' && !state.limitedUsed && !game.rescue && (game.diceChoices?.reduce((a, b) => a + b, 0) ?? 0) >= 10
         : skill.id === 'fr-paris' ? game.phase === 'WAIT_ROLL' && !state.rolledThisTurn && !game.rescue && !state.limitedUsed && locked > 0
         : skill.id === 'cn-scale' ? game.phase === 'WAIT_SELECT_DIE' && state.awakened && (state.readyAtTurn <= state.normalTurns || !!state.storedCharge) && state.scaleUsedTurn !== state.normalTurns && !state.forcedDelta
         : skill.id === 'cn-grit' ? ordinaryWindow && state.awakened && state.energy >= 3 && state.level < 3
         : skill.id === 'uk-industry' ? game.phase === 'WAIT_SELECT_DIE' && state.awakened
         : skill.id === 'us-bomb' ? ordinaryWindow && !state.limitedUsed : false);
-      return { playerId: player.id, skillId: skill.id, charges: skill.kind === 'LIMITED' ? (state.limitedUsed ? 0 : 1) : -1,
+      return { playerId: player.id, skillId: skill.id, charges: skill.id === 'uk-apple' ? (state.appleUsed ? 0 : 1) : skill.kind === 'LIMITED' ? (state.limitedUsed ? 0 : 1) : -1,
         cooldownTurns: skill.id === 'cn-scale' ? Math.max(0, state.readyAtTurn - state.normalTurns) : 0,
         available, awakened: state.awakened, energy: state.energy, level: state.level, forcedDelta: state.forcedDelta,
         storedCharge: !!state.storedCharge, usedThisTurn: state.scaleUsedTurn === state.normalTurns,

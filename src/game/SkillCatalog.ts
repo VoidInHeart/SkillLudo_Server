@@ -5,7 +5,7 @@ export const SKILL_KIND_NAMES: Record<SkillKind, string> = { LIMITED: '限定技
 export interface SkillDescription { id: string; color: PlayerColor; name: string; kind: SkillKind; description: string; }
 export const SKILL_CATALOG: readonly SkillDescription[] = [
   { id: 'uk-sun', color: 'RED', name: '日不落帝国', kind: 'LIMITED', description: '本次双骰之和达到 10 时，可交换公共航线上任意两架未锁定飞机的位置，敌我皆可。换入返家缺口的飞机须绕行公共航线，之后才能进入自己的终点跑道。' },
-  { id: 'uk-apple', color: 'RED', name: '牛顿的苹果', kind: 'AWAKENING', description: '至少两架己方飞机进入终点跑道或完成航程后，永久解锁「工业革命」。' },
+  { id: 'uk-apple', color: 'RED', name: '牛顿的苹果', kind: 'AWAKENING', description: '两架己方飞机进入终点跑道或完成后，永久解锁「工业革命」。觉醒前每局一次：即将被敌机撞毁时，可选择绑定并同行。主动移动或越过英国返家检查点时解除；载机先转入私有跑道则停在最后一格公共航线。英国不能击毁载机，第三方击毁载机时两架均被击毁，英国飞机获得一次诅咒：重新起飞后的首次行走点数固定为 1，且不连投。15 秒未回应默认不绑定。' },
   { id: 'uk-industry', color: 'RED', name: '工业革命', kind: 'NORMAL', description: '觉醒后，预选点数时可选择 +1。双骰相同时，也可使用两骰之和。任何改点方案均不获得 6 点连投，双 6 合计也不例外。' },
   { id: 'fr-tradition', color: 'YELLOW', name: '传统艺能', kind: 'NORMAL', description: '即将被击落时，可把飞机锁在原格，仍计为被击落；最多锁两架。其他未锁定飞机离开该格后，选择本次投出的 3 或 4，即可解锁并按该点数移动。15 秒未回应默认不锁定。' },
   { id: 'fr-paris', color: 'YELLOW', name: '困在巴黎的女孩', kind: 'LIMITED', description: '正常回合投骰前，解锁全部己方锁定飞机。每架依次获得一组额外双骰，选一点数减 1 后移动；救援不能击落飞机，也不连投。全部救援结束后，继续正常投骰。' },

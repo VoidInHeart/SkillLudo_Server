@@ -4,6 +4,7 @@ import type { Room } from '../room/Room.js';
 import { GameRules } from './GameRules.js';
 import { FINAL_PATH_START, MAIN_PATH_LENGTH, getBoardCell, getPieceCell, positionOnRing } from './PathData.js';
 import { assignColors } from '../room/ColorAssignment.js';
+import { captureGroup, carryPassengers, relocatePassengers } from './BoundPieces.js';
 import { actionSpecs, activeAtCell, beginNormalTurn, consumeAction, faction, initializeFactions, publicSkills, refreshAwakening, refreshStoredCharge } from './SkillState.js';
 
 const GAME_COLORS: PlayerColor[] = ['RED', 'YELLOW', 'BLUE', 'GREEN'];
@@ -173,18 +174,30 @@ export class GameEngine {
     const game = room.game!, playerId = room.players[game.currentPlayerIndex].id;
     const previewGame = { ...game, pieces: game.pieces.map((p) => p.id === pieceId ? { ...p, locked: false } : p) };
     const result = this.rules.calculateMove(previewGame, playerId, pieceId, option.dice, { noCapture: option.kind === 'FR_RESCUE' });
-    result.extraTurn = option.extraTurn;
+    const piece = game.pieces.find((p) => p.id === pieceId)!;
+    result.extraTurn = option.extraTurn && !(piece.cursed && piece.state !== 'AIRPORT');
     return result;
   }
 
-  private finalizeMove(room: Room, result: MoveResult, lockedIds: string[]): MoveResult {
+  private finalizeMove(room: Room, result: MoveResult, lockedIds: string[], boundIds: string[] = []): MoveResult {
     const game = this.requireGame(room), playerId = room.players[game.currentPlayerIndex].id, pieceId = result.pieceId;
     const piece = game.pieces.find((candidate) => candidate.id === pieceId);
     if (!piece) throw new GameError('INVALID_PIECE');
     game.phase = 'RESOLVING_MOVE';
+    piece.boundTo = undefined;
+    if (piece.state !== 'AIRPORT') piece.cursed = false;
+    for (const id of boundIds) {
+      const passenger = game.pieces.find((p) => p.id === id)!;
+      passenger.boundTo = piece.id;
+      faction(room, passenger.playerId).appleUsed = true;
+    }
+    const carried = carryPassengers(game, result, boundIds);
+    if (carried.length) result.carriedPieces = carried;
     piece.progress = result.toProgress;
     piece.state = result.reachedFinish ? 'FINISHED' : result.toProgress >= FINAL_PATH_START ? 'FINAL_PATH' : 'MAIN_PATH';
     piece.locked = false; piece.detour = result.toDetour === true;
+    result.killedPieceIds = result.killedPieceIds.filter((id) => !boundIds.includes(id));
+    result.captures = result.captures.filter((c) => !boundIds.includes(c.pieceId));
     result.captureOutcomes = this.applyCaptures(room, playerId, result.killedPieceIds, lockedIds);
     refreshAwakening(room);
 
@@ -223,9 +236,10 @@ export class GameEngine {
     const game = this.requireGame(room), player = room.players.find((p) => p.id === playerId);
     if (!player || player.isBot || player.aiControlled) throw new GameError('SKILL_UNAVAILABLE', 'AI 托管不会主动发动技能');
     if (command.rollId !== game.rollId) throw new GameError('INVALID_DIE', '技能操作已过期');
-    if (command.skillId === 'fr-lock') {
+    if (command.skillId === 'fr-lock' || command.skillId === 'uk-bind') {
       const reaction = game.reaction;
       if (!reaction || reaction.playerId !== playerId || reaction.id !== command.reactionId || Date.now() >= reaction.expiresAt) throw new GameError('SKILL_UNAVAILABLE', '受击选择已结束');
+      if ((reaction.kind === 'UK_BIND') !== (command.skillId === 'uk-bind')) throw new GameError('SKILL_UNAVAILABLE');
       return this.resolveReaction(room, command.targetPieceIds ?? [], reaction.id);
     }
     this.assertCurrentPlayer(room, playerId);
@@ -238,10 +252,12 @@ export class GameEngine {
       const pieces = ids.map((id) => game.pieces.find((p) => p.id === id));
       if (pieces.some((p) => !p || p.locked || !getPieceCell(p)?.startsWith('M'))) throw new GameError('INVALID_PIECE', '仅可交换公共航线上未锁定的飞机');
       const [a, b] = pieces as [Piece, Piece], before = [{ ...a }, { ...b }];
+      // Explicitly relocating a passenger releases its binding; carriers keep passengers.
+      a.boundTo = undefined; b.boundTo = undefined;
       const aCell = getPieceCell(a)!, bCell = getPieceCell(b)!;
       Object.assign(a, positionOnRing(a.color, bCell)); Object.assign(b, positionOnRing(b.color, aCell));
       state.limitedUsed = true;
-      return { effect: { skillId: command.skillId, playerId, message: '日不落帝国：两架飞机交换位置', movedPieces: [{ before: before[0], after: { ...a } }, { before: before[1], after: { ...b } }] } };
+      return { effect: { skillId: command.skillId, playerId, message: '日不落帝国：两架飞机交换位置', movedPieces: [{ before: before[0], after: { ...a } }, { before: before[1], after: { ...b } }, ...relocatePassengers(game, [a, b])] } };
     }
     if (command.skillId === 'fr-paris') {
       const pieces = game.pieces.filter((p) => p.playerId === playerId && p.locked);
@@ -271,18 +287,24 @@ export class GameEngine {
     throw new GameError('SKILL_UNAVAILABLE', '该技能通过预选点数或被动结算生效');
   }
 
-  private beginReaction(room: Room, actorPlayerId: string, victimIds: string[], move?: MoveResult, effect?: SkillEffect): boolean {
+  private beginReaction(room: Room, actorPlayerId: string, victimIds: string[], move?: MoveResult, effect?: SkillEffect,
+    decisions = { lockedIds: [] as string[], boundIds: [] as string[], answered: [] as string[] }): boolean {
     const game = room.game!;
-    const defender = room.players.find((p) => p.color === 'YELLOW');
-    if (!defender || defender.isBot || defender.aiControlled || !defender.connected) return false;
-    const capacity = 2 - game.pieces.filter((p) => p.playerId === defender.id && p.locked && !victimIds.includes(p.id)).length;
-    const pieceIds = victimIds.filter((id) => game.pieces.some((p) => p.id === id && p.playerId === defender.id && !p.locked));
-    if (capacity <= 0 || !pieceIds.length) return false;
+    const choices = room.players.filter((p) => ['YELLOW', 'RED'].includes(p.color) && !p.isBot && !p.aiControlled && p.connected && !decisions.answered.includes(p.id));
+    for (const defender of choices) {
+    const binding = defender.color === 'RED', state = faction(room, defender.id);
+    if (binding && (!move || state.awakened || state.appleUsed || actorPlayerId === defender.id)) continue;
+    const capacity = binding ? 1 : 2 - game.pieces.filter((p) => p.playerId === defender.id && p.locked && !victimIds.includes(p.id)).length;
+    const pieceIds = victimIds.filter((id) => game.pieces.some((p) => p.id === id && p.playerId === defender.id && !p.locked && !p.boundTo));
+    if (capacity <= 0 || !pieceIds.length) continue;
     game.effectSequence = (game.effectSequence ?? 0) + 1;
     game.reaction = { id: game.effectSequence, playerId: defender.id, pieceIds, capacity, expiresAt: Date.now() + 15_000,
-      actorPlayerId, victimIds: [...victimIds], move, effect, previousPhase: game.phase };
+      kind: binding ? 'UK_BIND' : 'FR_LOCK', carrierId: binding ? move!.pieceId : undefined,
+      actorPlayerId, victimIds: [...victimIds], move, effect, previousPhase: game.phase, decisions };
     game.phase = 'WAIT_REACTION';
     return true;
+    }
+    return false;
   }
 
   public resolveReaction(room: Room, lockedIds: string[], reactionId: number): SkillResolution {
@@ -293,17 +315,22 @@ export class GameEngine {
     }
     game.reaction = undefined;
     game.phase = pending.previousPhase;
-    if (pending.move) return { move: this.finalizeMove(room, pending.move, lockedIds) };
+    const decisions = pending.decisions ?? { lockedIds: [], boundIds: [], answered: [] };
+    (pending.kind === 'UK_BIND' ? decisions.boundIds : decisions.lockedIds).push(...lockedIds);
+    decisions.answered.push(pending.playerId);
+    if (this.beginReaction(room, pending.actorPlayerId, pending.victimIds, pending.move, pending.effect, decisions)) return { pending: true };
+    if (pending.move) return { move: this.finalizeMove(room, pending.move, decisions.lockedIds, decisions.boundIds) };
     const effect = pending.effect!;
-    effect.captures = this.applyCaptures(room, pending.actorPlayerId, pending.victimIds, lockedIds);
+    effect.captures = this.applyCaptures(room, pending.actorPlayerId, pending.victimIds, decisions.lockedIds);
     refreshAwakening(room);
     return { effect };
   }
 
   private applyCaptures(room: Room, actorPlayerId: string, victimIds: string[], lockedIds: string[]): CaptureOutcome[] {
     const game = room.game!, actor = room.players.find((p) => p.id === actorPlayerId);
-    return [...new Set(victimIds)].map((id) => {
+    return captureGroup(game, victimIds).map((id) => {
       const piece = game.pieces.find((p) => p.id === id)!, before = { ...piece };
+      if (piece.boundTo) { piece.cursed = true; piece.boundTo = undefined; }
       let outcome: CaptureOutcome['outcome'];
       if (lockedIds.includes(id)) { piece.locked = true; outcome = 'LOCKED'; }
       else {
@@ -341,7 +368,7 @@ export class GameEngine {
       movePreviews: game?.phase === 'WAIT_SELECT_PIECE' && game.dice !== null ? Object.fromEntries(game.movablePieceIds.map((id) => [id, this.previewAction(room, id, game.selectedAction ?? { dice: game.dice!, kind: 'STANDARD', extraTurn: game.dice === 6 })])) : {},
       skills: publicSkills(room),
       actionOptions: this.getActionOptions(room),
-      reaction: game?.reaction ? { id: game.reaction.id, playerId: game.reaction.playerId, pieceIds: [...game.reaction.pieceIds], capacity: game.reaction.capacity, expiresAt: game.reaction.expiresAt } : undefined,
+      reaction: game?.reaction ? { id: game.reaction.id, playerId: game.reaction.playerId, pieceIds: [...game.reaction.pieceIds], capacity: game.reaction.capacity, expiresAt: game.reaction.expiresAt, kind: game.reaction.kind, carrierId: game.reaction.carrierId } : undefined,
       rescuePieceIds: [...(game?.rescue?.pieceIds ?? [])], rolledTotal: game?.rolledTotal ?? 0, extraRolls: game?.extraRolls ?? 0
     };
   }
