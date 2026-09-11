@@ -3,7 +3,7 @@ export type PlayerColor = 'RED' | 'YELLOW' | 'BLUE' | 'GREEN';
 export type PieceState = 'AIRPORT' | 'MAIN_PATH' | 'FINAL_PATH' | 'FINISHED';
 export type RoomStatus = 'WAITING' | 'PLAYING' | 'FINISHED';
 export const PROTOCOL_VERSION = 3;
-export type GamePhase = 'WAIT_ROLL' | 'WAIT_SELECT_DIE' | 'WAIT_SELECT_PIECE' | 'RESOLVING_MOVE' | 'GAME_OVER';
+export type GamePhase = 'WAIT_ROLL' | 'WAIT_SELECT_DIE' | 'WAIT_SELECT_PIECE' | 'WAIT_REACTION' | 'RESOLVING_MOVE' | 'GAME_OVER';
 export type DicePair = [number, number];
 export type RoomMode = 'PRIVATE' | 'MATCHMAKING';
 
@@ -33,7 +33,7 @@ export type ServerMessageType =
   | 'PLAYER_JOINED' | 'PLAYER_LEFT' | 'PLAYER_READY_CHANGED'
   | 'CHAT_MESSAGE' | 'CHAT_HISTORY' | 'SYSTEM_MESSAGE'
   | 'GAME_START' | 'TURN_START' | 'DICE_RESULT' | 'DIE_SELECTED' | 'MOVABLE_PIECES'
-  | 'MOVE_RESULT' | 'GAME_STATE' | 'PLAYER_DISCONNECTED'
+  | 'MOVE_RESULT' | 'SKILL_EFFECT' | 'GAME_STATE' | 'PLAYER_DISCONNECTED'
   | 'PLAYER_RECONNECTED' | 'GAME_OVER' | 'ERROR' | 'PONG'
   | 'BOARD_CALIBRATION_DATA' | 'BOARD_CALIBRATION_OPEN' | 'BOARD_CALIBRATION_SAVED'
   | 'AI_TAKEOVER_CHANGED' | 'GAME_EXITED' | 'ACTIVE_GAMES';
@@ -107,6 +107,9 @@ export interface Piece {
   state: PieceState;
   /** -1 at airport, 0 takeoff, 1–50 shared ring, 51–56 private runway. */
   progress: number;
+  locked?: boolean;
+  /** Swapped planes traverse the omitted ring cells at progress -1/0. */
+  detour?: boolean;
 }
 
 export interface GameState {
@@ -120,6 +123,13 @@ export interface GameState {
   movablePieceIds: string[];
   rankings: string[];
   turnNumber: number;
+  factions?: Record<string, FactionRuntime>;
+  rolledTotal?: number;
+  extraRolls?: number;
+  selectedAction?: ActionOption;
+  rescue?: { playerId: string; pieceIds: string[] };
+  reaction?: PendingResolution;
+  effectSequence?: number;
 }
 
 export interface GameSnapshot {
@@ -143,6 +153,10 @@ export interface GameSnapshot {
   skills: PlayerSkillState[];
   /** Server-calculated choices. Selecting one locally does not mutate the game. */
   actionOptions?: ActionOption[];
+  reaction?: CaptureReaction;
+  rescuePieceIds?: string[];
+  rolledTotal?: number;
+  extraRolls?: number;
 }
 
 export interface ActionOption {
@@ -152,6 +166,7 @@ export interface ActionOption {
   label: string;
   kind: 'STANDARD' | 'UK_PLUS' | 'UK_SUM' | 'CN_SHIFT' | 'FR_RESCUE';
   delta?: number;
+  mandatory?: boolean;
   extraTurn: boolean;
   movablePieceIds: string[];
   movePreviews: Record<string, MoveResult>;
@@ -170,8 +185,28 @@ export interface DieSelected {
 }
 
 export type SkillWindow = 'TURN_START' | 'DIE_SELECTED' | 'BEFORE_MOVE' | 'AFTER_MOVE';
-export interface SkillCommand { roomId: string; skillId: string; targetPieceId?: string; rollId: number; }
-export interface PlayerSkillState { playerId: string; skillId: string; charges: number; cooldownTurns: number; }
+export interface SkillCommand { roomId: string; skillId: string; targetPieceId?: string; targetPieceIds?: string[]; targetCell?: string; reactionId?: number; rollId: number; }
+export interface PlayerSkillState {
+  playerId: string; skillId: string; charges: number; cooldownTurns: number;
+  available?: boolean; awakened?: boolean; progress?: number; energy?: number; level?: number; forcedDelta?: number; reason?: string;
+}
+export interface FactionRuntime {
+  normalTurns: number; rolledThisTurn: boolean; awakened: boolean; limitedUsed: boolean;
+  energy: number; level: number; readyAtTurn: number; forcedDelta: number; pendingDelta: number;
+}
+export interface CaptureOutcome { pieceId: string; outcome: 'AIRPORT' | 'TAKEOFF' | 'LOCKED'; before: Piece; after: Piece; }
+export interface CaptureReaction { id: number; playerId: string; pieceIds: string[]; capacity: number; expiresAt: number; }
+export interface SkillEffect {
+  skillId: string; playerId: string; message: string;
+  movedPieces?: Array<{ before: Piece; after: Piece }>;
+  captures?: CaptureOutcome[];
+  targetCells?: string[];
+}
+export interface PendingResolution extends CaptureReaction {
+  actorPlayerId: string; victimIds: string[]; move?: MoveResult; effect?: SkillEffect;
+  previousPhase: GamePhase;
+}
+export interface SkillResolution { move?: MoveResult; effect?: SkillEffect; pending?: boolean; }
 
 export type ChatKind = 'PUBLIC' | 'PRIVATE' | 'SYSTEM';
 export interface ChatEntry {
@@ -199,6 +234,10 @@ export interface MoveResult {
   reachedFinish: boolean;
   playerFinished: boolean;
   extraTurn: boolean;
+  captureOutcomes?: CaptureOutcome[];
+  pendingReaction?: boolean;
+  fromDetour?: boolean;
+  toDetour?: boolean;
 }
 
 export interface MoveSegment {

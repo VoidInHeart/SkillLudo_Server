@@ -1,9 +1,10 @@
 import { randomInt } from 'node:crypto';
-import { PROTOCOL_VERSION, type ActionOption, type CommitMoveCommand, type DiceResult, type DieSelected, type GameSnapshot, type GameState, type MoveResult, type Piece, type PlayerColor } from '../protocol.js';
+import { PROTOCOL_VERSION, type ActionOption, type CaptureOutcome, type CommitMoveCommand, type DiceResult, type DieSelected, type GameSnapshot, type GameState, type MoveResult, type Piece, type PlayerColor, type SkillCommand, type SkillEffect, type SkillResolution } from '../protocol.js';
 import type { Room } from '../room/Room.js';
 import { GameRules } from './GameRules.js';
-import { FINAL_PATH_START, MAIN_PATH_LENGTH, getBoardCell } from './PathData.js';
+import { FINAL_PATH_START, MAIN_PATH_LENGTH, getBoardCell, getPieceCell, positionOnRing } from './PathData.js';
 import { assignColors } from '../room/ColorAssignment.js';
+import { actionSpecs, activeAtCell, beginNormalTurn, consumeAction, faction, initializeFactions, publicSkills, refreshAwakening } from './SkillState.js';
 
 const GAME_COLORS: PlayerColor[] = ['RED', 'YELLOW', 'BLUE', 'GREEN'];
 
@@ -35,7 +36,8 @@ export class GameEngine {
       pieces: room.players.flatMap((player) => this.createPieces(player.id, player.color)),
       movablePieceIds: [],
       rankings: [],
-      turnNumber: 1
+      turnNumber: 1,
+      factions: initializeFactions(room), rolledTotal: 0, extraRolls: 0, effectSequence: 0
     };
   }
 
@@ -49,9 +51,13 @@ export class GameEngine {
     game.diceChoices = [forcedDice ?? Math.floor(this.random() * 6) + 1, Math.floor(this.random() * 6) + 1];
     game.dice = null;
     game.selectedDieIndex = null;
+    game.selectedAction = undefined;
     game.movablePieceIds = [];
     game.rollId += 1;
     game.phase = 'WAIT_SELECT_DIE';
+    game.rolledTotal = (game.rolledTotal ?? 0) + game.diceChoices[0] + game.diceChoices[1];
+    if (!game.rescue) faction(room, playerId).rolledThisTurn = true;
+    refreshAwakening(room);
     return { playerId, diceChoices: [...game.diceChoices], rollId: game.rollId };
   }
 
@@ -60,43 +66,51 @@ export class GameEngine {
     this.assertCurrentPlayer(room, playerId);
     if (game.phase !== 'WAIT_SELECT_DIE' || !game.diceChoices) throw new GameError('INVALID_PHASE');
     if ((dieIndex !== 0 && dieIndex !== 1) || rollId !== game.rollId) throw new GameError('INVALID_DIE', '骰子选择已失效，请选择本次投出的骰子');
-    const dice = game.diceChoices[dieIndex];
-    const movable = this.rules.getMovablePieces(game, playerId, dice);
+    const option = this.getActionOptions(room).find((option) => option.dieIndex === dieIndex && (option.kind === 'STANDARD' || option.kind === 'FR_RESCUE' || option.mandatory));
+    if (!option) throw new GameError('INVALID_DIE');
+    return this.selectAction(room, playerId, option, rollId);
+  }
+
+  private selectAction(room: Room, playerId: string, option: ActionOption, rollId: number): DieSelected {
+    const game = this.requireGame(room), { dice, dieIndex } = option;
+    consumeAction(room, option);
+    game.selectedAction = option;
     game.dice = dice;
     game.selectedDieIndex = dieIndex;
-    game.movablePieceIds = movable.map((piece) => piece.id);
-    if (movable.length === 0) {
+    game.movablePieceIds = [...option.movablePieceIds];
+    if (option.movablePieceIds.length === 0) {
       game.dice = null;
       game.phase = 'WAIT_ROLL';
       game.movablePieceIds = [];
       // A six earns another roll even when there is no legal plane to move.
-      const extraTurn = dice === 6;
-      if (!extraTurn) this.nextTurn(room);
+      const extraTurn = this.finishAction(room, option.extraTurn);
       return { playerId, dieIndex, dice, rollId, movablePieceIds: [], skipped: true, extraTurn };
     }
     game.phase = 'WAIT_SELECT_PIECE';
-    return { playerId, dieIndex, dice, rollId, movablePieceIds: [...game.movablePieceIds], skipped: false, extraTurn: dice === 6 };
+    return { playerId, dieIndex, dice, rollId, movablePieceIds: [...game.movablePieceIds], skipped: false, extraTurn: option.extraTurn };
   }
 
   public chooseAiDie(room: Room, playerId: string): number {
     const game = this.requireGame(room);
     this.assertCurrentPlayer(room, playerId);
     if (game.phase !== 'WAIT_SELECT_DIE' || !game.diceChoices) throw new GameError('INVALID_PHASE');
-    const scores = game.diceChoices.map((dice) => {
-      const moves = this.rules.getMovablePieces(game, playerId, dice).map((piece) => this.rules.calculateMove(game, playerId, piece.id, dice));
-      return moves.length ? Math.max(...moves.map((move) => (move.reachedFinish ? 100 : 0) + move.killedPieceIds.length * 30 + (move.tookOff ? 20 : 0) + (move.extraTurn ? 15 : 0) + move.toProgress - move.fromProgress)) : -1;
-    });
-    return scores[1] > scores[0] ? 1 : 0;
+    const options = this.getActionOptions(room).filter((option) => option.kind === 'STANDARD' || option.kind === 'FR_RESCUE' || option.mandatory);
+    const score = (option: ActionOption) => option.movablePieceIds.length ? Math.max(...Object.values(option.movePreviews).map((move) =>
+      (move.reachedFinish ? 100 : 0) + move.killedPieceIds.length * 30 + (move.tookOff ? 20 : 0) + (move.extraTurn ? 15 : 0) + move.toProgress - move.fromProgress)) : -1;
+    return [...options].sort((a, b) => score(b) - score(a))[0]?.dieIndex ?? 0;
   }
 
   public getActionOptions(room: Room): ActionOption[] {
     const game = room.game;
     if (!game || game.phase !== 'WAIT_SELECT_DIE' || !game.diceChoices) return [];
     const playerId = room.players[game.currentPlayerIndex].id;
-    return game.diceChoices.map((dice, dieIndex) => {
-      const ids = this.rules.getMovablePieces(game, playerId, dice).map((piece) => piece.id);
-      return { id: `die-${dieIndex}`, dieIndex, dice, label: String(dice), kind: 'STANDARD', extraTurn: dice === 6,
-        movablePieceIds: ids, movePreviews: Object.fromEntries(ids.map((id) => [id, this.rules.calculateMove(game, playerId, id, dice)])) };
+    return actionSpecs(room).map((spec) => {
+      const ids = game.pieces.filter((piece) => {
+        if (piece.playerId !== playerId || (game.rescue && !game.rescue.pieceIds.includes(piece.id))) return false;
+        if (piece.locked && (!(spec.dice === 3 || spec.dice === 4) || activeAtCell(game, piece, getPieceCell))) return false;
+        return this.rules.canMove({ ...piece, locked: false }, spec.dice);
+      }).map((piece) => piece.id);
+      return { ...spec, movablePieceIds: ids, movePreviews: Object.fromEntries(ids.map((id) => [id, this.previewAction(room, id, spec)])) };
     });
   }
 
@@ -111,7 +125,7 @@ export class GameEngine {
     if (command.pieceId ? !option.movablePieceIds.includes(command.pieceId) : option.movablePieceIds.length > 0) {
       throw new GameError('PIECE_NOT_MOVABLE', '请选择当前点数高亮的飞机');
     }
-    const selection = this.selectDie(room, playerId, option.dieIndex, command.rollId);
+    const selection = this.selectAction(room, playerId, option, command.rollId);
     return { selection, ...(command.pieceId ? { move: this.selectPiece(room, playerId, command.pieceId) } : {}) };
   }
 
@@ -150,19 +164,29 @@ export class GameEngine {
     if (game.phase !== 'WAIT_SELECT_PIECE' || game.dice === null) throw new GameError('INVALID_PHASE');
     if (!game.movablePieceIds.includes(pieceId)) throw new GameError('PIECE_NOT_MOVABLE');
 
-    const result = this.rules.calculateMove(game, playerId, pieceId, game.dice);
+    const result = this.previewAction(room, pieceId, game.selectedAction ?? { dice: game.dice, kind: 'STANDARD', extraTurn: game.dice === 6 });
+    if (this.beginReaction(room, playerId, result.killedPieceIds, result)) return { ...result, pendingReaction: true };
+    return this.finalizeMove(room, result, []);
+  }
+
+  private previewAction(room: Room, pieceId: string, option: Pick<ActionOption, 'dice' | 'kind' | 'extraTurn'>): MoveResult {
+    const game = room.game!, playerId = room.players[game.currentPlayerIndex].id;
+    const previewGame = { ...game, pieces: game.pieces.map((p) => p.id === pieceId ? { ...p, locked: false } : p) };
+    const result = this.rules.calculateMove(previewGame, playerId, pieceId, option.dice, { noCapture: option.kind === 'FR_RESCUE' });
+    result.extraTurn = option.extraTurn;
+    return result;
+  }
+
+  private finalizeMove(room: Room, result: MoveResult, lockedIds: string[]): MoveResult {
+    const game = this.requireGame(room), playerId = room.players[game.currentPlayerIndex].id, pieceId = result.pieceId;
     const piece = game.pieces.find((candidate) => candidate.id === pieceId);
     if (!piece) throw new GameError('INVALID_PIECE');
     game.phase = 'RESOLVING_MOVE';
     piece.progress = result.toProgress;
     piece.state = result.reachedFinish ? 'FINISHED' : result.toProgress >= FINAL_PATH_START ? 'FINAL_PATH' : 'MAIN_PATH';
-    for (const killedId of result.killedPieceIds) {
-      const killed = game.pieces.find((candidate) => candidate.id === killedId);
-      if (killed) {
-        killed.progress = -1;
-        killed.state = 'AIRPORT';
-      }
-    }
+    piece.locked = false; piece.detour = result.toDetour === true;
+    result.captureOutcomes = this.applyCaptures(room, playerId, result.killedPieceIds, lockedIds);
+    refreshAwakening(room);
 
     result.playerFinished = this.isPlayerFinished(game, playerId);
     if (result.playerFinished && !game.rankings.includes(playerId)) game.rankings.push(playerId);
@@ -177,13 +201,121 @@ export class GameEngine {
       return result;
     }
 
-    if (result.extraTurn && !result.playerFinished) {
-      game.phase = 'WAIT_ROLL';
-    } else {
-      game.phase = 'WAIT_ROLL';
-      this.nextTurn(room);
-    }
+    result.extraTurn = this.finishAction(room, result.extraTurn, pieceId);
     return result;
+  }
+
+  private finishAction(room: Room, rolledExtra: boolean, pieceId?: string): boolean {
+    const game = room.game!;
+    game.phase = 'WAIT_ROLL'; game.dice = null; game.movablePieceIds = []; game.selectedAction = undefined;
+    if (game.rescue) {
+      game.rescue.pieceIds = game.rescue.pieceIds.filter((id) => id !== pieceId);
+      if (!game.rescue.pieceIds.length) game.rescue = undefined;
+      return true;
+    }
+    game.extraRolls = (game.extraRolls ?? 0) + (rolledExtra ? 1 : 0);
+    if (game.extraRolls > 0) { game.extraRolls -= 1; return true; }
+    this.nextTurn(room);
+    return false;
+  }
+
+  public useSkill(room: Room, playerId: string, command: SkillCommand): SkillResolution {
+    const game = this.requireGame(room), player = room.players.find((p) => p.id === playerId);
+    if (!player || player.isBot || player.aiControlled) throw new GameError('SKILL_UNAVAILABLE', 'AI 托管不会主动发动技能');
+    if (command.rollId !== game.rollId) throw new GameError('INVALID_DIE', '技能操作已过期');
+    if (command.skillId === 'fr-lock') {
+      const reaction = game.reaction;
+      if (!reaction || reaction.playerId !== playerId || reaction.id !== command.reactionId || Date.now() >= reaction.expiresAt) throw new GameError('SKILL_UNAVAILABLE', '受击选择已结束');
+      return this.resolveReaction(room, command.targetPieceIds ?? [], reaction.id);
+    }
+    this.assertCurrentPlayer(room, playerId);
+    const publicId = command.skillId === 'cn-upgrade' ? 'cn-grit' : command.skillId;
+    if (!publicSkills(room).some((skill) => skill.playerId === playerId && skill.skillId === publicId && skill.available)) throw new GameError('SKILL_UNAVAILABLE', '当前条件不满足技能要求');
+    const state = faction(room, playerId);
+    if (command.skillId === 'uk-sun') {
+      const ids = command.targetPieceIds;
+      if (!ids || ids.length !== 2 || ids[0] === ids[1]) throw new GameError('INVALID_PIECE', '请选择两架不同的飞机');
+      const pieces = ids.map((id) => game.pieces.find((p) => p.id === id));
+      if (pieces.some((p) => !p || p.locked || !getPieceCell(p)?.startsWith('M'))) throw new GameError('INVALID_PIECE', '仅可交换公共航线上未锁定的飞机');
+      const [a, b] = pieces as [Piece, Piece], before = [{ ...a }, { ...b }];
+      const aCell = getPieceCell(a)!, bCell = getPieceCell(b)!;
+      Object.assign(a, positionOnRing(a.color, bCell)); Object.assign(b, positionOnRing(b.color, aCell));
+      state.limitedUsed = true;
+      return { effect: { skillId: command.skillId, playerId, message: '日不落帝国：两架飞机交换位置', movedPieces: [{ before: before[0], after: { ...a } }, { before: before[1], after: { ...b } }] } };
+    }
+    if (command.skillId === 'fr-paris') {
+      const pieces = game.pieces.filter((p) => p.playerId === playerId && p.locked);
+      const movedPieces = pieces.map((p) => ({ before: { ...p }, after: { ...p, locked: false } }));
+      pieces.forEach((p) => { p.locked = false; });
+      game.rescue = { playerId, pieceIds: pieces.map((p) => p.id) }; state.limitedUsed = true;
+      return { effect: { skillId: command.skillId, playerId, message: `解锁 ${pieces.length} 架飞机，逐架进行救援投掷`, movedPieces } };
+    }
+    if (command.skillId === 'cn-upgrade') {
+      state.energy -= 3; state.level += 1;
+      if (state.level === 1) { state.forcedDelta = 0; state.pendingDelta = 0; }
+      if (state.level === 3) state.readyAtTurn = Math.max(state.normalTurns, state.readyAtTurn - 1);
+      return { effect: { skillId: command.skillId, playerId, message: `尺有所长强化至第 ${state.level} 重` } };
+    }
+    if (command.skillId === 'us-bomb') {
+      if (!command.targetCell || !/^M([0-9]|[1-4][0-9]|5[01])$/.test(command.targetCell)) throw new GameError('INVALID_PIECE', '请选择公共航线格子');
+      const center = Number(command.targetCell.slice(1));
+      const targetCells = [-2, -1, 0, 1, 2].map((delta) => `M${(center + delta + MAIN_PATH_LENGTH) % MAIN_PATH_LENGTH}`);
+      const victimIds = game.pieces.filter((p) => targetCells.includes(getPieceCell(p) ?? '')).map((p) => p.id);
+      const effect: SkillEffect = { skillId: command.skillId, playerId, message: '核弹轰炸覆盖五格，敌我飞机均受影响', targetCells };
+      state.limitedUsed = true;
+      if (this.beginReaction(room, playerId, victimIds, undefined, effect)) return { pending: true };
+      effect.captures = this.applyCaptures(room, playerId, victimIds, []);
+      refreshAwakening(room);
+      return { effect };
+    }
+    throw new GameError('SKILL_UNAVAILABLE', '该技能通过预选点数或被动结算生效');
+  }
+
+  private beginReaction(room: Room, actorPlayerId: string, victimIds: string[], move?: MoveResult, effect?: SkillEffect): boolean {
+    const game = room.game!;
+    const defender = room.players.find((p) => p.color === 'YELLOW');
+    if (!defender || defender.isBot || defender.aiControlled || !defender.connected) return false;
+    const capacity = 2 - game.pieces.filter((p) => p.playerId === defender.id && p.locked && !victimIds.includes(p.id)).length;
+    const pieceIds = victimIds.filter((id) => game.pieces.some((p) => p.id === id && p.playerId === defender.id && !p.locked));
+    if (capacity <= 0 || !pieceIds.length) return false;
+    game.effectSequence = (game.effectSequence ?? 0) + 1;
+    game.reaction = { id: game.effectSequence, playerId: defender.id, pieceIds, capacity, expiresAt: Date.now() + 15_000,
+      actorPlayerId, victimIds: [...victimIds], move, effect, previousPhase: game.phase };
+    game.phase = 'WAIT_REACTION';
+    return true;
+  }
+
+  public resolveReaction(room: Room, lockedIds: string[], reactionId: number): SkillResolution {
+    const game = this.requireGame(room), pending = game.reaction;
+    if (game.phase !== 'WAIT_REACTION' || !pending || pending.id !== reactionId) throw new GameError('SKILL_UNAVAILABLE');
+    if (lockedIds.length > pending.capacity || new Set(lockedIds).size !== lockedIds.length || lockedIds.some((id) => !pending.pieceIds.includes(id))) {
+      throw new GameError('INVALID_PIECE', '锁定飞机选择无效或超过两架上限');
+    }
+    game.reaction = undefined;
+    game.phase = pending.previousPhase;
+    if (pending.move) return { move: this.finalizeMove(room, pending.move, lockedIds) };
+    const effect = pending.effect!;
+    effect.captures = this.applyCaptures(room, pending.actorPlayerId, pending.victimIds, lockedIds);
+    refreshAwakening(room);
+    return { effect };
+  }
+
+  private applyCaptures(room: Room, actorPlayerId: string, victimIds: string[], lockedIds: string[]): CaptureOutcome[] {
+    const game = room.game!, actor = room.players.find((p) => p.id === actorPlayerId);
+    return [...new Set(victimIds)].map((id) => {
+      const piece = game.pieces.find((p) => p.id === id)!, before = { ...piece };
+      let outcome: CaptureOutcome['outcome'];
+      if (lockedIds.includes(id)) { piece.locked = true; outcome = 'LOCKED'; }
+      else {
+        piece.locked = false; piece.detour = false;
+        if (piece.color === 'BLUE') {
+          piece.progress = 0; piece.state = 'MAIN_PATH'; outcome = 'TAKEOFF';
+          const state = faction(room, piece.playerId); state.energy = Math.min(3, state.energy + 1);
+        } else { piece.progress = -1; piece.state = 'AIRPORT'; outcome = 'AIRPORT'; }
+      }
+      if (actor?.color === 'GREEN' && piece.playerId !== actorPlayerId) game.extraRolls = (game.extraRolls ?? 0) + 1;
+      return { pieceId: id, outcome, before, after: { ...piece } };
+    });
   }
 
   public getSnapshot(room: Room): GameSnapshot {
@@ -205,9 +337,11 @@ export class GameEngine {
       movablePieceIds: [...(game?.movablePieceIds ?? [])],
       rankings: [...(game?.rankings ?? [])],
       turnNumber: game?.turnNumber ?? 0,
-      movePreviews: game?.phase === 'WAIT_SELECT_PIECE' && game.dice !== null ? Object.fromEntries(game.movablePieceIds.map((id) => [id, this.rules.calculateMove(game, room.players[game.currentPlayerIndex].id, id, game.dice!)])) : {},
-      skills: [],
-      actionOptions: this.getActionOptions(room)
+      movePreviews: game?.phase === 'WAIT_SELECT_PIECE' && game.dice !== null ? Object.fromEntries(game.movablePieceIds.map((id) => [id, this.previewAction(room, id, game.selectedAction ?? { dice: game.dice!, kind: 'STANDARD', extraTurn: game.dice === 6 })])) : {},
+      skills: publicSkills(room),
+      actionOptions: this.getActionOptions(room),
+      reaction: game?.reaction ? { id: game.reaction.id, playerId: game.reaction.playerId, pieceIds: [...game.reaction.pieceIds], capacity: game.reaction.capacity, expiresAt: game.reaction.expiresAt } : undefined,
+      rescuePieceIds: [...(game?.rescue?.pieceIds ?? [])], rolledTotal: game?.rolledTotal ?? 0, extraRolls: game?.extraRolls ?? 0
     };
   }
 
@@ -258,6 +392,7 @@ export class GameEngine {
       if (!game.rankings.includes(room.players[game.currentPlayerIndex].id)) break;
     }
     game.turnNumber += 1;
+    beginNormalTurn(room, room.players[game.currentPlayerIndex].id);
   }
 
   private isPlayerFinished(game: GameState, playerId: string): boolean {

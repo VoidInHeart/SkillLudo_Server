@@ -1,4 +1,4 @@
-import type { PlayerColor } from '../protocol.js';
+import type { Piece, PlayerColor } from '../protocol.js';
 
 /** Board constants are logical only—no screen coordinates appear in server code. */
 export const MAIN_PATH_LENGTH = 52;
@@ -18,7 +18,8 @@ const clockwiseNodeOffset: Record<PlayerColor, number> = {
 };
 
 /** A colour-specific route maps progress to one shared main-path cell or private final cell. */
-export function getBoardCell(color: PlayerColor, progress: number): string | null {
+export function getBoardCell(color: PlayerColor, progress: number, detour = false): string | null {
+  if (detour && progress <= 0) return `M${(clockwiseNodeOffset[color] + progress - 1 + MAIN_PATH_LENGTH) % MAIN_PATH_LENGTH}`;
   if (progress < 0) return null;
   if (progress < FINAL_PATH_START) {
     // Progress 0 is the colour-private takeoff arrow. Progress 1 enters the
@@ -28,6 +29,15 @@ export function getBoardCell(color: PlayerColor, progress: number): string | nul
   }
   if (progress <= FINISH_PROGRESS) return `F-${color}-${progress - FINAL_PATH_START}`;
   return null;
+}
+
+export function getPieceCell(piece: Piece): string | null {
+  if (piece.state === 'AIRPORT' || piece.state === 'FINISHED') return null;
+  return getBoardCell(piece.color, piece.progress, piece.detour);
+}
+export function positionOnRing(color: PlayerColor, cell: string): { progress: number; detour: boolean } {
+  const relative = (Number(cell.slice(1)) - clockwiseNodeOffset[color] + MAIN_PATH_LENGTH) % MAIN_PATH_LENGTH + 1;
+  return { progress: relative > 50 ? relative - MAIN_PATH_LENGTH : relative, detour: relative > 50 };
 }
 
 /**

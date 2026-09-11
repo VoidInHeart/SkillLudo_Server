@@ -7,6 +7,7 @@ const client = resolve(server, process.env.SKILLLUDO_CLIENT_PATH ?? '../SkillLud
 const check = process.argv.includes('--check');
 const mirrors = [
   ['src/protocol.ts', 'assets/scripts/protocol/GameProtocol.ts', (text) => text],
+  ['src/game/SkillCatalog.ts', 'assets/scripts/game/SkillCatalog.ts', (text) => text.replace("'../protocol.js'", "'../protocol/GameProtocol'")],
   ['src/game/PathData.ts', 'assets/scripts/game/PathData.ts', (text) => text.replace("'../protocol.js'", "'../protocol/GameProtocol'")]
 ];
 for (const [source, destination, transform] of mirrors) {

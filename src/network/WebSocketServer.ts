@@ -2,7 +2,7 @@ import { WebSocketServer as WsServer, type RawData, type WebSocket } from 'ws';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { GameEngine, GameError } from '../game/GameEngine.js';
 import { BoardCalibrationStore } from '../game/BoardCalibrationStore.js';
-import type { AuthData, ChatEntry, ClientMessage, GameSnapshot, ServerMessage } from '../protocol.js';
+import type { AuthData, ChatEntry, ClientMessage, GameSnapshot, ServerMessage, SkillCommand, SkillResolution } from '../protocol.js';
 import { ErrorCode } from '../protocol.js';
 import { AuthError } from '../auth/UserRepository.js';
 import { SessionManager, type Session } from '../auth/SessionManager.js';
@@ -32,6 +32,7 @@ export class GameWebSocketServer {
   private readonly connections = new ConnectionManager();
   private readonly maintenanceTimer: NodeJS.Timeout;
   private readonly aiTimers = new Map<string, NodeJS.Timeout>();
+  private readonly reactionTimers = new Map<string, NodeJS.Timeout>();
   private closing = false;
   // The client-side code merely exposes this local tooling. The server remains
   // authoritative and refuses forced rolls in a production deployment.
@@ -68,6 +69,7 @@ export class GameWebSocketServer {
     clearInterval(this.maintenanceTimer);
     this.aiTimers.forEach((timer) => clearTimeout(timer));
     this.aiTimers.clear();
+    this.reactionTimers.forEach((timer) => clearTimeout(timer)); this.reactionTimers.clear();
     const deadline = setTimeout(() => {
       this.wss.clients.forEach((socket) => socket.terminate());
       this.http.closeAllConnections();
@@ -197,7 +199,7 @@ export class GameWebSocketServer {
       case 'ROLL_DICE': this.rollDice(session, roomId, message.data, message.requestId); break;
       case 'SELECT_DIE': this.selectDie(session, roomId, message.data, message.requestId); break;
       case 'COMMIT_MOVE': this.commitMove(session, roomId, message.data, message.requestId); break;
-      case 'USE_SKILL': throw new GameError('SKILL_UNAVAILABLE', '本局尚未启用阵营技能');
+      case 'USE_SKILL': this.useSkill(session, roomId, message.data, message.requestId); break;
       case 'SELECT_PIECE': {
         this.assertSessionRoom(session, roomId);
         const room = this.rooms.requireRoom(roomId);
@@ -347,6 +349,7 @@ export class GameWebSocketServer {
   }
 
   private publishMove(room: Room, result: import('../protocol.js').MoveResult, requestId?: string): void {
+    if (result.pendingReaction) { this.broadcastState(room, requestId); this.scheduleReaction(room); return; }
     this.broadcast(room, 'MOVE_RESULT', result, requestId);
     const finalSnapshot = this.game.getSnapshot(room);
     if (room.status === 'FINISHED') {
@@ -359,6 +362,46 @@ export class GameWebSocketServer {
       if (!result.extraTurn || result.playerFinished) this.broadcast(room, 'TURN_START', this.turnData(finalSnapshot));
       this.scheduleAiTurn(room);
     }
+  }
+
+  private useSkill(session: Session, roomId: string, data: unknown, requestId: string): void {
+    this.assertSessionRoom(session, roomId);
+    const room = this.rooms.requireRoom(roomId);
+    this.assertManualControl(room, session.playerId);
+    if (!isRecord(data) || typeof data.skillId !== 'string' || typeof data.rollId !== 'number'
+      || (data.targetPieceIds !== undefined && (!Array.isArray(data.targetPieceIds) || data.targetPieceIds.length > 4 || !data.targetPieceIds.every((id) => typeof id === 'string')))
+      || (data.targetCell !== undefined && typeof data.targetCell !== 'string')
+      || (data.reactionId !== undefined && typeof data.reactionId !== 'number')) throw new GameError('INVALID_MESSAGE');
+    const result = this.game.useSkill(room, session.playerId, data as unknown as SkillCommand);
+    this.publishSkillResolution(room, result, requestId);
+  }
+
+  private publishSkillResolution(room: Room, result: SkillResolution, requestId?: string): void {
+    const timer = this.reactionTimers.get(room.roomId);
+    if (timer) { clearTimeout(timer); this.reactionTimers.delete(room.roomId); }
+    if (result.move) this.publishMove(room, result.move, requestId);
+    else {
+      if (result.effect) this.broadcast(room, 'SKILL_EFFECT', result.effect, requestId);
+      this.broadcastState(room, requestId);
+      if (result.pending) this.scheduleReaction(room);
+      else this.scheduleAiTurn(room);
+    }
+  }
+
+  private scheduleReaction(room: Room): void {
+    const pending = room.game?.reaction;
+    if (!pending || this.closing) return;
+    const previous = this.reactionTimers.get(room.roomId);
+    if (previous) clearTimeout(previous);
+    const defender = room.players.find((p) => p.id === pending.playerId);
+    const wait = !defender?.connected || defender.isBot || defender.aiControlled ? 0 : Math.max(0, pending.expiresAt - Date.now());
+    const timer = setTimeout(() => {
+      this.reactionTimers.delete(room.roomId);
+      if (room.status !== 'PLAYING' || room.game?.reaction?.id !== pending.id) return;
+      try { this.publishSkillResolution(room, this.game.resolveReaction(room, [], pending.id)); }
+      catch (error) { console.error('[REACTION_ERROR]', error); }
+    }, wait);
+    this.reactionTimers.set(room.roomId, timer);
   }
 
   private ping(socket: WebSocket, session: Session, roomId: string, requestId: string): void {
@@ -405,7 +448,7 @@ export class GameWebSocketServer {
     this.broadcast(room, 'AI_TAKEOVER_CHANGED', { playerId: player.id, enabled }, requestId);
     this.broadcastSystem(room, `${player.nickname}${enabled ? ' 已开启AI托管' : ' 已取消AI托管'}`);
     this.broadcastState(room);
-    if (enabled) this.scheduleAiTurn(room);
+    if (enabled) { this.scheduleAiTurn(room); this.scheduleReaction(room); }
   }
 
   private exitGame(socket: WebSocket, session: Session, roomId: string, requestId: string): void {
@@ -472,6 +515,7 @@ export class GameWebSocketServer {
       this.broadcastState(room);
       this.scheduleAiTurn(room);
       this.log('DISCONNECT', room, session);
+      this.scheduleReaction(room);
     }
   }
 
@@ -600,7 +644,8 @@ export class GameWebSocketServer {
         const pieceId = this.game.chooseAiPiece(room, player.id);
         if (pieceId) {
           const move = this.game.selectPiece(room, player.id, pieceId);
-          this.broadcast(room, 'MOVE_RESULT', { ...move, ai: true, trustee: !player.isBot });
+          this.publishMove(room, move);
+          return;
         }
       }
 

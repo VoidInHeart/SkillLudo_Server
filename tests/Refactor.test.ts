@@ -121,6 +121,7 @@ test('fifty seeded four-seat games finish with unique colours and valid piece pr
     let state = seed;
     const random = () => { state = (Math.imul(state, 1664525) + 1013904223) >>> 0; return state / 4294967296; };
     const { room, engine } = setup(random);
+    room.players.forEach((player) => { player.aiControlled = true; });
     let actions = 0;
     while (room.status === 'PLAYING' && actions++ < 15000) {
       const current = room.players[room.game!.currentPlayerIndex];
