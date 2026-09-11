@@ -327,6 +327,7 @@ export class GameEngine {
       roomMode: room.mode ?? 'PRIVATE',
       ownerId: room.ownerId,
       players: room.players.map(({ id, nickname, avatarUrl, color, preferredColor, isBot, aiControlled, ready, connected }) => ({ id, nickname, avatarUrl, color, preferredColor: preferredColor ?? null, isBot, aiControlled, ready, connected })),
+      spectators: room.spectators?.map(({ id, nickname, avatarUrl, connected }) => ({ id, nickname, avatarUrl, connected, spectating: true })),
       currentPlayerId: game ? room.players[game.currentPlayerIndex]?.id ?? null : null,
       phase: game?.phase ?? null,
       dice: game?.dice ?? null,

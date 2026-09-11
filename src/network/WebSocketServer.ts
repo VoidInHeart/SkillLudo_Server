@@ -8,6 +8,7 @@ import { AuthError } from '../auth/UserRepository.js';
 import { SessionManager, type Session } from '../auth/SessionManager.js';
 import { RoomManager, RoomError } from '../room/RoomManager.js';
 import type { Player, Room } from '../room/Room.js';
+import { roomMembers } from '../room/Room.js';
 import { ConnectionManager } from './ConnectionManager.js';
 
 interface ConnectionContext {
@@ -248,6 +249,7 @@ export class GameWebSocketServer {
       this.broadcastSystem(room, `${session.nickname} 离开了房间`);
       this.broadcastState(room);
       this.log('ROOM_LEAVE', room, session);
+      this.scheduleAiTurn(room); this.scheduleReaction(room); this.finishIfNoHumans(room, true);
     }
   }
 
@@ -265,7 +267,7 @@ export class GameWebSocketServer {
     }
     const entry: ChatEntry = { kind: recipientId ? 'PRIVATE' : 'PUBLIC', content, timestamp: Date.now(), senderId: session.playerId, senderNickname: session.nickname };
     if (recipientId) {
-      const recipient = room.players.find((player) => player.id === recipientId);
+      const recipient = roomMembers(room).find((player) => player.id === recipientId);
       if (!recipient) throw new GameError('NOT_IN_ROOM', '私信目标不在房间内');
       entry.recipientId = recipient.id;
       entry.recipientNickname = recipient.nickname;
@@ -406,7 +408,7 @@ export class GameWebSocketServer {
 
   private ping(socket: WebSocket, session: Session, roomId: string, requestId: string): void {
     const room = roomId ? this.rooms.getRoom(roomId) : undefined;
-    const player = room?.players.find((candidate) => candidate.id === session.playerId);
+    const player = room ? roomMembers(room).find((candidate) => candidate.id === session.playerId) : undefined;
     if (player) {
       player.lastHeartbeatAt = Date.now();
       player.connected = true;
@@ -418,7 +420,7 @@ export class GameWebSocketServer {
   private reconnect(socket: WebSocket, session: Session, roomId: string, requestId: string): void {
     this.assertSessionRoom(session, roomId);
     const room = this.rooms.requireRoom(roomId);
-    const player = room.players.find((candidate) => candidate.id === session.playerId);
+    const player = roomMembers(room).find((candidate) => candidate.id === session.playerId);
     if (!player) throw new GameError('NOT_IN_ROOM');
     const wasControlled = player.aiControlled === true;
     player.connected = true;
@@ -455,13 +457,13 @@ export class GameWebSocketServer {
     this.assertSessionRoom(session, roomId);
     const room = this.rooms.requireRoom(roomId);
     if (room.status !== 'PLAYING') throw new GameError('INVALID_PHASE', '当前没有进行中的对局');
-    const player = room.players.find((candidate) => candidate.id === session.playerId && !candidate.isBot);
+    const player = roomMembers(room).find((candidate) => candidate.id === session.playerId && !candidate.isBot);
     if (!player) throw new GameError('NOT_IN_ROOM');
     player.connected = false;
-    player.aiControlled = true;
+    player.aiControlled = !player.spectating;
     player.disconnectedAt = Date.now();
     player.exitedAt = Date.now();
-    this.broadcastSystem(room, `${player.nickname} 已退出对局，由AI托管`);
+    this.broadcastSystem(room, player.spectating ? `${player.nickname} 已退出观战` : `${player.nickname} 已退出对局，由AI托管`);
     this.broadcastState(room);
     this.send(socket, 'GAME_EXITED', { roomId }, requestId);
     this.send(socket, 'ACTIVE_GAMES', { games: this.activeGamesFor(session.playerId) });
@@ -508,7 +510,7 @@ export class GameWebSocketServer {
     if (!this.connections.isBoundTo(session.playerId, socket)) return;
     this.connections.unbind(session.playerId, socket);
     const room = session.roomId ? this.rooms.getRoom(session.roomId) : undefined;
-    const player = room?.players.find((candidate) => candidate.id === session.playerId);
+    const player = room ? roomMembers(room).find((candidate) => candidate.id === session.playerId) : undefined;
     if (room && player) {
       const newlyControlled = this.markDisconnected(player);
       this.broadcast(room, 'PLAYER_DISCONNECTED', { playerId: player.id });
@@ -523,7 +525,7 @@ export class GameWebSocketServer {
   private maintainRooms(): void {
     const now = Date.now();
     for (const room of this.rooms.getRooms()) {
-      for (const player of room.players) {
+      for (const player of roomMembers(room)) {
         if (player.isBot) continue;
         if (player.connected && now - player.lastHeartbeatAt > HEARTBEAT_TIMEOUT_MS) {
           const newlyControlled = this.markDisconnected(player);
@@ -569,7 +571,9 @@ export class GameWebSocketServer {
   private assertSessionRoom(session: Session, roomId: string): void { if (!roomId || session.roomId !== roomId) throw new GameError('NOT_IN_ROOM'); }
   private assertAdmin(session: Session): void { if (!session.isAdmin) throw new GameError('UNAUTHORIZED', '仅 admin 账号可使用棋盘校准'); }
   private assertManualControl(room: Room, playerId: string): void {
-    if (room.players.find((player) => player.id === playerId)?.aiControlled) throw new GameError('INVALID_PHASE', '当前由AI托管，请先取消托管');
+    const player = room.players.find((player) => player.id === playerId);
+    if (!player) throw new GameError('INVALID_PHASE', '观战席不能操作棋子或技能');
+    if (player.aiControlled) throw new GameError('INVALID_PHASE', '当前由AI托管，请先取消托管');
   }
   private roomIdFrom(data: unknown): string { return isRecord(data) && typeof data.roomId === 'string' ? data.roomId.trim() : ''; }
   private pieceIdFrom(data: unknown): string { return isRecord(data) && typeof data.pieceId === 'string' ? data.pieceId : ''; }
@@ -593,7 +597,7 @@ export class GameWebSocketServer {
   }
   private turnData(snapshot: GameSnapshot): object { return { currentPlayerId: snapshot.currentPlayerId, turnNumber: snapshot.turnNumber, phase: snapshot.phase }; }
   private send(socket: WebSocket, type: ServerMessage['type'], data: unknown, requestId?: string): void { this.connections.sendSocket(socket, this.message(type, data, requestId)); }
-  private broadcast(room: Room, type: ServerMessage['type'], data: unknown, requestId?: string): void { this.connections.broadcast(room.players.map((player) => player.id), this.message(type, data, requestId)); }
+  private broadcast(room: Room, type: ServerMessage['type'], data: unknown, requestId?: string): void { this.connections.broadcast(roomMembers(room).map((player) => player.id), this.message(type, data, requestId)); }
   private broadcastState(room: Room, requestId?: string): void { this.broadcast(room, 'GAME_STATE', this.game.getSnapshot(room), requestId); }
   private broadcastSystem(room: Room, content: string): void {
     const entry: ChatEntry = { kind: 'SYSTEM', content, timestamp: Date.now() };
@@ -669,9 +673,9 @@ export class GameWebSocketServer {
   }
 
   private markDisconnected(player: Player): boolean {
-    const newlyControlled = player.aiControlled !== true;
+    const newlyControlled = !player.spectating && player.aiControlled !== true;
     player.connected = false;
-    player.aiControlled = true;
+    player.aiControlled = !player.spectating;
     player.disconnectedAt ??= Date.now();
     return newlyControlled;
   }
@@ -679,14 +683,14 @@ export class GameWebSocketServer {
   private activeGamesFor(playerId: string): object[] {
     const room = this.rooms.findActiveRoomByPlayer(playerId);
     if (!room) return [];
-    const player = room.players.find((candidate) => candidate.id === playerId);
+    const player = roomMembers(room).find((candidate) => candidate.id === playerId);
     if (!player) return [];
-    return [{ roomId: room.roomId, color: player.color, turnNumber: room.game?.turnNumber ?? 0, playerCount: room.players.length, status: room.status }];
+    return [{ roomId: room.roomId, color: player.spectating ? undefined : player.color, spectating: !!player.spectating, turnNumber: room.game?.turnNumber ?? 0, playerCount: roomMembers(room).length, status: room.status }];
   }
 
   private finishIfNoHumans(room: Room, immediate: boolean, now = Date.now()): void {
     if (room.status !== 'PLAYING') return;
-    const humans = room.players.filter((player) => !player.isBot);
+    const humans = roomMembers(room).filter((player) => !player.isBot);
     if (humans.some((player) => player.connected)) return;
     if (!immediate && humans.some((player) => !player.disconnectedAt || now - player.disconnectedAt < ABANDONED_ROOM_GRACE_MS)) return;
     const timer = this.aiTimers.get(room.roomId);
@@ -707,11 +711,11 @@ export class GameWebSocketServer {
   }
 
   private resetFinishedRoom(room: Room): void {
-    const previousHumanIds = room.players.filter((player) => !player.isBot).map((player) => player.id);
+    const previousHumanIds = roomMembers(room).filter((player) => !player.isBot).map((player) => player.id);
     this.rooms.resetFinishedRoom(room);
-    const retainedIds = new Set(room.players.map((player) => player.id));
+    const retainedIds = new Set(roomMembers(room).map((player) => player.id));
     this.sessions.clearRoomForPlayers(previousHumanIds.filter((id) => !retainedIds.has(id)), room.roomId);
-    if (room.players.length === 0) this.rooms.destroyRoom(room.roomId);
+    if (roomMembers(room).length === 0) this.rooms.destroyRoom(room.roomId);
     else this.broadcastState(room);
   }
 

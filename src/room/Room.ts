@@ -14,6 +14,7 @@ export interface Player {
   lastHeartbeatAt: number;
   disconnectedAt?: number;
   exitedAt?: number;
+  spectating?: boolean;
 }
 
 export interface Room {
@@ -22,8 +23,12 @@ export interface Room {
   status: RoomStatus;
   mode?: RoomMode;
   players: Player[];
+  spectators?: Player[];
   game?: GameState;
   createdAt: number;
   lastActiveAt: number;
   chatHistory: ChatEntry[];
 }
+
+/** Only players participate in turn order; membership also includes two spectator seats. */
+export function roomMembers(room: Room): Player[] { return room.players.concat(room.spectators ?? []); }

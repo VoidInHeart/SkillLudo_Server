@@ -94,7 +94,8 @@ export interface PlayerPublicState {
 
 export interface ActiveGameSummary {
   roomId: string;
-  color: PlayerColor;
+  color?: PlayerColor;
+  spectating?: boolean;
   turnNumber: number;
   playerCount: number;
   status: RoomStatus;
@@ -139,6 +140,7 @@ export interface GameSnapshot {
   roomMode: RoomMode;
   ownerId: string;
   players: PlayerPublicState[];
+  spectators?: Array<Pick<PlayerPublicState, 'id' | 'nickname' | 'avatarUrl' | 'connected'> & { spectating: true }>;
   currentPlayerId: string | null;
   phase: GamePhase | null;
   dice: number | null;
