@@ -97,3 +97,20 @@ test('N03: skill target and trustee guards are enforced at the socket boundary',
     assert.ok(s.internals.game.getSnapshot(s.room).skills.filter((skill) => skill.playerId === s.room.players[0].id).every((skill) => !skill.available));
   } finally { await s.close(); }
 });
+
+test('N04: Chinese and American passive effects announce in chat and send faction flash notices', async () => {
+  const s = await setup();
+  try {
+    Object.assign(s.piece('green-1'), { state: 'MAIN_PATH', progress: 4 });
+    // GREEN progress 5 and BLUE progress 31 are the same common cell.
+    Object.assign(s.piece('blue-1'), { state: 'MAIN_PATH', progress: 31 });
+    const announcements: Message[] = [];
+    s.sockets[0].on('message', (raw) => { const value = JSON.parse(String(raw)); if (['SKILL_READY', 'SYSTEM_MESSAGE'].includes(value.type)) announcements.push(value); });
+    await s.command(0, 'ROLL_DICE', { roomId: s.roomId, debugDice: 1 }, 'DICE_RESULT');
+    await s.command(0, 'COMMIT_MOVE', { roomId: s.roomId, rollId: s.room.game!.rollId, optionId: 'die-0', pieceId: 'green-1' });
+    assert.ok(announcements.some((m) => m.type === 'SKILL_READY' && m.data.skillIds.includes('cn-grit')));
+    assert.ok(announcements.some((m) => m.type === 'SKILL_READY' && m.data.skillIds.includes('us-war')));
+    assert.ok(announcements.some((m) => m.type === 'SYSTEM_MESSAGE' && m.data.content.includes('坚韧不拔')));
+    assert.equal(s.piece('blue-1').progress, 0);
+  } finally { await s.close(); }
+});

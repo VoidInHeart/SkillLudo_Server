@@ -69,7 +69,7 @@ test('direct wormhole entry jumps once after exit and never captures the ordinar
   assert.deepEqual(move.killedPieceIds, []);
 });
 
-test('the first player with four completed planes wins the game immediately', () => {
+test('the first player with four completed planes wins first place and opens the continuation vote', () => {
   const engine = new GameEngine();
   const room = {
     roomId: '123456', ownerId: 'p1', status: 'PLAYING', createdAt: Date.now(), lastActiveAt: Date.now(), chatHistory: [],

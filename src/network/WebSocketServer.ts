@@ -364,6 +364,8 @@ export class GameWebSocketServer {
   private publishMove(room: Room, result: import('../protocol.js').MoveResult, requestId?: string): void {
     if (result.pendingReaction) { this.broadcastState(room, requestId); this.scheduleReaction(room); return; }
     this.broadcast(room, 'MOVE_RESULT', result, requestId);
+    const actor = room.game?.pieces.find((p) => p.id === result.pieceId)?.playerId;
+    if (actor) this.announceCapturePassives(room, actor, result.captureOutcomes ?? []);
     const finalSnapshot = this.game.getSnapshot(room);
     if (room.status === 'FINISHED') {
       this.publishFinished(room);
@@ -392,7 +394,10 @@ export class GameWebSocketServer {
     if (timer) { clearTimeout(timer); this.reactionTimers.delete(room.roomId); }
     if (result.move) this.publishMove(room, result.move, requestId);
     else {
-      if (result.effect) this.broadcast(room, 'SKILL_EFFECT', result.effect, requestId);
+      if (result.effect) {
+        this.broadcast(room, 'SKILL_EFFECT', result.effect, requestId);
+        this.announceCapturePassives(room, result.effect.playerId, result.effect.captures ?? []);
+      }
       this.broadcastState(room, requestId);
       if (result.pending) this.scheduleReaction(room);
       else this.scheduleAiTurn(room);
@@ -623,6 +628,16 @@ export class GameWebSocketServer {
       const names = notice.skillIds.map((id) => `「${SKILL_CATALOG.find((s) => s.id === id)!.name}」`).join('、');
       this.broadcastSystem(room, `${FACTION_NAMES[player.color]} ${player.nickname}：${names}触发条件已满足`);
       this.broadcast(room, 'SKILL_READY', notice);
+    }
+  }
+  private announceCapturePassives(room: Room, actorId: string, captures: import('../protocol.js').CaptureOutcome[]): void {
+    const skills = new Map<string, string>();
+    for (const capture of captures) if (capture.outcome === 'TAKEOFF') skills.set(capture.after.playerId, 'cn-grit');
+    if (room.players.find((p) => p.id === actorId)?.color === 'GREEN' && captures.some((c) => c.after.playerId !== actorId)) skills.set(actorId, 'us-war');
+    for (const [playerId, skillId] of skills) {
+      const player = room.players.find((p) => p.id === playerId)!;
+      this.broadcastSystem(room, `${FACTION_NAMES[player.color]} ${player.nickname}：触发「${SKILL_CATALOG.find((s) => s.id === skillId)!.name}」`);
+      this.broadcast(room, 'SKILL_READY', { playerId, skillIds: [skillId] });
     }
   }
   private broadcastSystem(room: Room, content: string): void {

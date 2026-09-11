@@ -207,8 +207,8 @@ export class GameEngine {
     game.dice = null;
     game.movablePieceIds = [];
 
-    // A complete squad wins immediately. The finished planes are rendered back
-    // in their own airport with a distinct completion icon on the client.
+    // First place opens the single continuation vote; a second-place finish ends
+    // the match. Completed planes render in their airport with a completion icon.
     if (result.playerFinished) {
       beginWinnerVote(room);
       return result;

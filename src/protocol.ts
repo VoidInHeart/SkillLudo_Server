@@ -265,7 +265,7 @@ export interface MoveResult {
   fromDetour?: boolean;
   toDetour?: boolean;
   effectiveDice?: number;
-  carriedPieces?: Array<{ before: Piece; after: Piece }>;
+  carriedPieces?: Array<{ before: Piece; after: Piece; fromCarrierProgress: number; toCarrierProgress: number }>;
 }
 
 export interface MoveSegment {

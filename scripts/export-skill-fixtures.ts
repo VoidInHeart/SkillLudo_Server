@@ -4,7 +4,7 @@ import { GameEngine } from '../src/game/GameEngine.js';
 import { GameRules } from '../src/game/GameRules.js';
 import { RoomManager } from '../src/room/RoomManager.js';
 import { faction, refreshAwakening } from '../src/game/SkillState.js';
-import { positionOnRing } from '../src/game/PathData.js';
+import { getBoardCell, getPieceCell, positionOnRing } from '../src/game/PathData.js';
 import type { PlayerColor } from '../src/protocol.js';
 
 function setup(color: PlayerColor) {
@@ -54,6 +54,23 @@ const output = new URL('../../SkillLudo_Client/docs/verification/', import.meta.
   const snapshot = s.engine.getSnapshot(s.room);
   const effect = s.engine.useSkill(s.room, 'YELLOW', { roomId: s.room.roomId, rollId: 0, skillId: 'fr-paris' }).effect;
   fixtures.push({ name: 'paris', playerId: 'YELLOW', snapshot, effect, after: s.engine.getSnapshot(s.room) });
+}
+{
+  const s = setup('GREEN'); s.at('green-1', 17);
+  Object.assign(s.at('red-1', 1), positionOnRing('RED', getBoardCell('GREEN', 18)!));
+  s.engine.rollDice(s.room, 'GREEN', 1);
+  s.engine.commitMove(s.room, 'GREEN', { roomId: s.room.roomId, rollId: s.game.rollId, optionId: 'die-0', pieceId: 'green-1' });
+  const snapshot = s.engine.getSnapshot(s.room);
+  const move = s.engine.resolveReaction(s.room, ['red-1'], snapshot.reaction!.id).move;
+  fixtures.push({ name: 'binding', playerId: 'RED', snapshot, move, after: s.engine.getSnapshot(s.room) });
+}
+{
+  const s = setup('GREEN'), carrier = s.at('green-1', 36), passenger = s.at('red-1', 1);
+  Object.assign(passenger, positionOnRing('RED', getPieceCell(carrier)!), { boundTo: carrier.id });
+  s.engine.rollDice(s.room, 'GREEN', 2);
+  const snapshot = s.engine.getSnapshot(s.room);
+  const move = s.engine.commitMove(s.room, 'GREEN', { roomId: s.room.roomId, rollId: s.game.rollId, optionId: 'die-0', pieceId: carrier.id }).move;
+  fixtures.push({ name: 'checkpoint', playerId: 'GREEN', snapshot, move, after: s.engine.getSnapshot(s.room) });
 }
 mkdirSync(output, { recursive: true }); writeFileSync(new URL('skill-fixtures.json', output), JSON.stringify(fixtures, null, 2));
 console.log(`Exported ${fixtures.length} skill presentation fixtures.`);
