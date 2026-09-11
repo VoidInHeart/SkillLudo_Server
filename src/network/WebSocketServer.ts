@@ -10,6 +10,9 @@ import { RoomManager, RoomError } from '../room/RoomManager.js';
 import type { Player, Room } from '../room/Room.js';
 import { roomMembers } from '../room/Room.js';
 import { ConnectionManager } from './ConnectionManager.js';
+import { advanceLifecycle, LifecycleError, requestPause, synchronizeActivity, voteContinue, votePause } from '../game/MatchLifecycle.js';
+import { SkillAnnouncements } from '../game/SkillAnnouncements.js';
+import { FACTION_NAMES, SKILL_CATALOG } from '../game/SkillCatalog.js';
 
 interface ConnectionContext {
   session?: Session;
@@ -34,6 +37,9 @@ export class GameWebSocketServer {
   private readonly maintenanceTimer: NodeJS.Timeout;
   private readonly aiTimers = new Map<string, NodeJS.Timeout>();
   private readonly reactionTimers = new Map<string, NodeJS.Timeout>();
+  private readonly lifecycleTimer: NodeJS.Timeout;
+  private readonly skillAnnouncements = new SkillAnnouncements();
+  private readonly finishedGames = new WeakSet<object>();
   private closing = false;
   // The client-side code merely exposes this local tooling. The server remains
   // authoritative and refuses forced rolls in a production deployment.
@@ -51,6 +57,7 @@ export class GameWebSocketServer {
     this.wss.on('connection', (socket, request) => this.onConnection(socket, request));
     this.wss.on('error', (error) => console.error('[WS_ERROR]', error));
     this.maintenanceTimer = setInterval(() => this.maintainRooms(), 10_000);
+    this.lifecycleTimer = setInterval(() => this.tickLifecycles(), 500);
     this.http.listen(port);
   }
 
@@ -68,6 +75,7 @@ export class GameWebSocketServer {
   private async shutdown(): Promise<void> {
     this.closing = true;
     clearInterval(this.maintenanceTimer);
+    clearInterval(this.lifecycleTimer);
     this.aiTimers.forEach((timer) => clearTimeout(timer));
     this.aiTimers.clear();
     this.reactionTimers.forEach((timer) => clearTimeout(timer)); this.reactionTimers.clear();
@@ -215,6 +223,7 @@ export class GameWebSocketServer {
       case 'SET_AI_TAKEOVER': this.setAiTakeover(session, roomId, message.data, message.requestId); break;
       case 'EXIT_GAME': this.exitGame(socket, session, roomId, message.requestId); break;
       case 'REJOIN_GAME': this.reconnect(socket, session, roomId, message.requestId); break;
+      case 'REQUEST_PAUSE': case 'VOTE_PAUSE': case 'VOTE_CONTINUE': this.lifecycleCommand(session, roomId, message); break;
       default: throw new GameError('INVALID_MESSAGE');
     }
   }
@@ -293,6 +302,7 @@ export class GameWebSocketServer {
     const room = this.rooms.requireRoom(roomId);
     if (room.ownerId !== session.playerId) throw new GameError('NOT_ROOM_OWNER');
     this.game.startGame(room);
+    synchronizeActivity(room);
     const snapshot = this.game.getSnapshot(room);
     this.broadcast(room, 'GAME_START', snapshot, requestId);
     const aiNames = room.players.filter((player) => player.isBot).map((player) => player.nickname);
@@ -300,6 +310,7 @@ export class GameWebSocketServer {
     this.broadcastSystem(room, '房主已开始对局，祝各位旗开得胜！');
     this.broadcast(room, 'TURN_START', this.turnData(snapshot));
     this.scheduleAiTurn(room);
+    this.announceSkills(room);
     this.log('GAME_START', room, session, requestId);
   }
 
@@ -355,10 +366,7 @@ export class GameWebSocketServer {
     this.broadcast(room, 'MOVE_RESULT', result, requestId);
     const finalSnapshot = this.game.getSnapshot(room);
     if (room.status === 'FINISHED') {
-      this.broadcast(room, 'GAME_OVER', finalSnapshot);
-      setTimeout(() => {
-        if (room.status === 'FINISHED') this.resetFinishedRoom(room);
-      }, 6_000);
+      this.publishFinished(room);
     } else {
       this.broadcastState(room);
       if (!result.extraTurn || result.playerFinished) this.broadcast(room, 'TURN_START', this.turnData(finalSnapshot));
@@ -375,6 +383,7 @@ export class GameWebSocketServer {
       || (data.targetCell !== undefined && typeof data.targetCell !== 'string')
       || (data.reactionId !== undefined && typeof data.reactionId !== 'number')) throw new GameError('INVALID_MESSAGE');
     const result = this.game.useSkill(room, session.playerId, data as unknown as SkillCommand);
+    synchronizeActivity(room, Date.now(), session.playerId);
     this.publishSkillResolution(room, result, requestId);
   }
 
@@ -392,14 +401,14 @@ export class GameWebSocketServer {
 
   private scheduleReaction(room: Room): void {
     const pending = room.game?.reaction;
-    if (!pending || this.closing) return;
     const previous = this.reactionTimers.get(room.roomId);
-    if (previous) clearTimeout(previous);
+    if (previous) { clearTimeout(previous); this.reactionTimers.delete(room.roomId); }
+    if (!pending || this.closing || room.game?.lifecycle?.pause) return;
     const defender = room.players.find((p) => p.id === pending.playerId);
     const wait = !defender?.connected || defender.isBot || defender.aiControlled ? 0 : Math.max(0, pending.expiresAt - Date.now());
     const timer = setTimeout(() => {
       this.reactionTimers.delete(room.roomId);
-      if (room.status !== 'PLAYING' || room.game?.reaction?.id !== pending.id) return;
+      if (room.status !== 'PLAYING' || room.game?.lifecycle?.pause || room.game?.reaction?.id !== pending.id) return;
       try { this.publishSkillResolution(room, this.game.resolveReaction(room, [], pending.id)); }
       catch (error) { console.error('[REACTION_ERROR]', error); }
     }, wait);
@@ -429,6 +438,7 @@ export class GameWebSocketServer {
     player.disconnectedAt = undefined;
     player.exitedAt = undefined;
     player.nickname = session.nickname;
+    synchronizeActivity(room, Date.now(), wasControlled ? player.id : undefined);
     this.connections.bind(session.playerId, socket);
     this.send(socket, 'GAME_STATE', this.game.getSnapshot(room), requestId);
     this.sendChatHistory(socket, room);
@@ -436,6 +446,7 @@ export class GameWebSocketServer {
     if (wasControlled) this.broadcastSystem(room, `${player.nickname} 已重连入局，AI托管结束`);
     this.broadcastState(room);
     this.send(socket, 'ACTIVE_GAMES', { games: this.activeGamesFor(session.playerId) });
+    this.scheduleReaction(room); this.scheduleAiTurn(room);
   }
 
   private setAiTakeover(session: Session, roomId: string, data: unknown, requestId: string): void {
@@ -447,6 +458,7 @@ export class GameWebSocketServer {
     const enabled = isRecord(data) && data.enabled === true;
     if (player.aiControlled === enabled) return;
     player.aiControlled = enabled;
+    synchronizeActivity(room, Date.now(), enabled ? undefined : player.id);
     this.broadcast(room, 'AI_TAKEOVER_CHANGED', { playerId: player.id, enabled }, requestId);
     this.broadcastSystem(room, `${player.nickname}${enabled ? ' 已开启AI托管' : ' 已取消AI托管'}`);
     this.broadcastState(room);
@@ -460,10 +472,10 @@ export class GameWebSocketServer {
     const player = roomMembers(room).find((candidate) => candidate.id === session.playerId && !candidate.isBot);
     if (!player) throw new GameError('NOT_IN_ROOM');
     player.connected = false;
-    player.aiControlled = !player.spectating;
+    if (!room.game?.lifecycle?.pause) player.aiControlled = !player.spectating;
     player.disconnectedAt = Date.now();
     player.exitedAt = Date.now();
-    this.broadcastSystem(room, player.spectating ? `${player.nickname} 已退出观战` : `${player.nickname} 已退出对局，由AI托管`);
+    this.broadcastSystem(room, room.game?.lifecycle?.pause ? `${player.nickname} 暂时离开，暂停期间保留棋局` : player.spectating ? `${player.nickname} 已退出观战` : `${player.nickname} 已退出对局，由AI托管`);
     this.broadcastState(room);
     this.send(socket, 'GAME_EXITED', { roomId }, requestId);
     this.send(socket, 'ACTIVE_GAMES', { games: this.activeGamesFor(session.playerId) });
@@ -512,7 +524,7 @@ export class GameWebSocketServer {
     const room = session.roomId ? this.rooms.getRoom(session.roomId) : undefined;
     const player = room ? roomMembers(room).find((candidate) => candidate.id === session.playerId) : undefined;
     if (room && player) {
-      const newlyControlled = this.markDisconnected(player);
+      const newlyControlled = this.markDisconnected(player, !!room.game?.lifecycle?.pause);
       this.broadcast(room, 'PLAYER_DISCONNECTED', { playerId: player.id });
       if (newlyControlled) this.broadcastSystem(room, `${player.nickname} 已断线，由AI托管`);
       this.broadcastState(room);
@@ -525,6 +537,7 @@ export class GameWebSocketServer {
   private maintainRooms(): void {
     const now = Date.now();
     for (const room of this.rooms.getRooms()) {
+      if (room.game?.lifecycle?.pause) continue;
       for (const player of roomMembers(room)) {
         if (player.isBot) continue;
         if (player.connected && now - player.lastHeartbeatAt > HEARTBEAT_TIMEOUT_MS) {
@@ -571,6 +584,7 @@ export class GameWebSocketServer {
   private assertSessionRoom(session: Session, roomId: string): void { if (!roomId || session.roomId !== roomId) throw new GameError('NOT_IN_ROOM'); }
   private assertAdmin(session: Session): void { if (!session.isAdmin) throw new GameError('UNAUTHORIZED', '仅 admin 账号可使用棋盘校准'); }
   private assertManualControl(room: Room, playerId: string): void {
+    if (room.game?.lifecycle?.pause) throw new GameError('INVALID_PHASE', '技术暂停中，请等待恢复');
     const player = room.players.find((player) => player.id === playerId);
     if (!player) throw new GameError('INVALID_PHASE', '观战席不能操作棋子或技能');
     if (player.aiControlled) throw new GameError('INVALID_PHASE', '当前由AI托管，请先取消托管');
@@ -598,7 +612,19 @@ export class GameWebSocketServer {
   private turnData(snapshot: GameSnapshot): object { return { currentPlayerId: snapshot.currentPlayerId, turnNumber: snapshot.turnNumber, phase: snapshot.phase }; }
   private send(socket: WebSocket, type: ServerMessage['type'], data: unknown, requestId?: string): void { this.connections.sendSocket(socket, this.message(type, data, requestId)); }
   private broadcast(room: Room, type: ServerMessage['type'], data: unknown, requestId?: string): void { this.connections.broadcast(roomMembers(room).map((player) => player.id), this.message(type, data, requestId)); }
-  private broadcastState(room: Room, requestId?: string): void { this.broadcast(room, 'GAME_STATE', this.game.getSnapshot(room), requestId); }
+  private broadcastState(room: Room, requestId?: string): void {
+    synchronizeActivity(room);
+    this.announceSkills(room);
+    this.broadcast(room, 'GAME_STATE', this.game.getSnapshot(room), requestId);
+  }
+  private announceSkills(room: Room): void {
+    for (const notice of this.skillAnnouncements.collect(room)) {
+      const player = room.players.find((p) => p.id === notice.playerId)!;
+      const names = notice.skillIds.map((id) => `「${SKILL_CATALOG.find((s) => s.id === id)!.name}」`).join('、');
+      this.broadcastSystem(room, `${FACTION_NAMES[player.color]} ${player.nickname}：${names}触发条件已满足`);
+      this.broadcast(room, 'SKILL_READY', notice);
+    }
+  }
   private broadcastSystem(room: Room, content: string): void {
     const entry: ChatEntry = { kind: 'SYSTEM', content, timestamp: Date.now() };
     this.rooms.addChatEntry(room, entry);
@@ -607,7 +633,7 @@ export class GameWebSocketServer {
   private sendChatHistory(socket: WebSocket, room: Room): void { this.send(socket, 'CHAT_HISTORY', { entries: room.chatHistory }); }
   private message(type: ServerMessage['type'], data: unknown, requestId?: string): ServerMessage { return { type, requestId, data, serverTime: Date.now() }; }
   private sendError(socket: WebSocket, error: unknown): void {
-    const code = error instanceof GameError || error instanceof RoomError || error instanceof AuthError ? error.code : error instanceof Error && error.message === 'INVALID_SESSION' ? 'INVALID_SESSION' : 'INTERNAL_ERROR';
+    const code = error instanceof GameError || error instanceof RoomError || error instanceof AuthError || error instanceof LifecycleError ? error.code : error instanceof Error && error.message === 'INVALID_SESSION' ? 'INVALID_SESSION' : 'INTERNAL_ERROR';
     const knownCode = Object.values(ErrorCode).includes(code as ErrorCode) ? code : 'INTERNAL_ERROR';
     const message = error instanceof Error ? error.message : '服务器异常';
     console.warn('[COMMAND_ERROR]', knownCode, message);
@@ -619,7 +645,7 @@ export class GameWebSocketServer {
 
   /** AI seats and human trustee seats share one authoritative turn runner. */
   private scheduleAiTurn(room: Room): void {
-    if (this.closing) return;
+    if (this.closing || room.game?.lifecycle?.pause) return;
     const game = room.game;
     const player = game ? room.players[game.currentPlayerIndex] : undefined;
     if (room.status !== 'PLAYING' || !game || !['WAIT_ROLL', 'WAIT_SELECT_DIE', 'WAIT_SELECT_PIECE'].includes(game.phase)
@@ -632,7 +658,7 @@ export class GameWebSocketServer {
   }
 
   private playAiTurn(room: Room): void {
-    if (this.closing) return;
+    if (this.closing || room.game?.lifecycle?.pause) return;
     const game = room.game;
     const player = game ? room.players[game.currentPlayerIndex] : undefined;
     if (room.status !== 'PLAYING' || !game || !player || (!player.isBot && !player.aiControlled)
@@ -672,7 +698,8 @@ export class GameWebSocketServer {
     }
   }
 
-  private markDisconnected(player: Player): boolean {
+  private markDisconnected(player: Player, paused = false): boolean {
+    if (paused) { player.connected = false; player.disconnectedAt ??= Date.now(); return false; }
     const newlyControlled = !player.spectating && player.aiControlled !== true;
     player.connected = false;
     player.aiControlled = !player.spectating;
@@ -689,7 +716,7 @@ export class GameWebSocketServer {
   }
 
   private finishIfNoHumans(room: Room, immediate: boolean, now = Date.now()): void {
-    if (room.status !== 'PLAYING') return;
+    if (room.status !== 'PLAYING' || room.game?.lifecycle?.pause || room.game?.phase === 'WINNER_VOTE') return;
     const humans = roomMembers(room).filter((player) => !player.isBot);
     if (humans.some((player) => player.connected)) return;
     if (!immediate && humans.some((player) => !player.disconnectedAt || now - player.disconnectedAt < ABANDONED_ROOM_GRACE_MS)) return;
@@ -721,6 +748,50 @@ export class GameWebSocketServer {
 
   /** Keeps the status check out of a narrowed AI-turn branch after a move. */
   private isFinishedRoom(room: Room): boolean { return room.status === 'FINISHED'; }
+
+  private lifecycleCommand(session: Session, roomId: string, message: ClientMessage): void {
+    this.assertSessionRoom(session, roomId);
+    const room = this.rooms.requireRoom(roomId), data = message.data;
+    const wasPaused = !!room.game?.lifecycle?.pause, priorVote = room.game?.lifecycle?.pauseVote;
+    if (message.type === 'REQUEST_PAUSE') {
+      requestPause(room, session.playerId);
+      this.broadcastSystem(room, `${session.nickname} 发起技术暂停，请其他参赛真人在 30 秒内表决`);
+    } else {
+      if (!isRecord(data) || typeof data.voteId !== 'number' || typeof data.agree !== 'boolean') throw new GameError('INVALID_MESSAGE');
+      if (message.type === 'VOTE_PAUSE') votePause(room, session.playerId, data.voteId, data.agree);
+      else voteContinue(room, session.playerId, data.voteId, data.agree);
+    }
+    if (!wasPaused && room.game?.lifecycle?.pause) {
+      this.broadcastSystem(room, '技术暂停全票通过，棋局封存 2 分钟，可离开网页后重连');
+      const ai = this.aiTimers.get(roomId); if (ai) clearTimeout(ai); this.aiTimers.delete(roomId);
+    } else if (priorVote && !room.game?.lifecycle?.pauseVote) this.broadcastSystem(room, '技术暂停未获全票同意');
+    if (message.type === 'VOTE_CONTINUE' && !room.game?.lifecycle?.continueVote) {
+      this.broadcastSystem(room, room.status === 'FINISHED' ? '继续投票未达到人数要求，本局结束' : '继续投票通过，开始角逐第二名');
+    }
+    this.broadcastState(room, message.requestId);
+    this.scheduleReaction(room); this.scheduleAiTurn(room);
+    if (room.status === 'FINISHED') this.publishFinished(room);
+  }
+
+  private tickLifecycles(): void {
+    if (this.closing) return;
+    for (const room of this.rooms.getRooms()) {
+      const result = advanceLifecycle(room);
+      if (!result.changed) continue;
+      result.notices.forEach((text) => this.broadcastSystem(room, text));
+      result.takeoverIds.forEach((playerId) => this.broadcast(room, 'AI_TAKEOVER_CHANGED', { playerId, enabled: true }));
+      this.broadcastState(room); this.scheduleReaction(room); this.scheduleAiTurn(room);
+      if (room.status === 'FINISHED') this.publishFinished(room);
+    }
+  }
+
+  private publishFinished(room: Room): void {
+    if (!room.game || this.finishedGames.has(room.game)) return;
+    const game = room.game; this.finishedGames.add(game);
+    this.broadcast(room, 'GAME_OVER', this.game.getSnapshot(room));
+    const timer = setTimeout(() => { if (!this.closing && room.status === 'FINISHED' && room.game === game) this.resetFinishedRoom(room); }, 12_000);
+    timer.unref();
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -127,6 +127,7 @@ test('fifty seeded four-seat games finish with unique colours and valid piece pr
       const current = room.players[room.game!.currentPlayerIndex];
       if (room.game!.phase === 'WAIT_ROLL') engine.rollDice(room, current.id);
       else if (room.game!.phase === 'WAIT_SELECT_DIE') engine.selectDie(room, current.id, engine.chooseAiDie(room, current.id), room.game!.rollId);
+      else if (room.game!.phase === 'WINNER_VOTE') advanceLifecycle(room, room.game!.lifecycle!.continueVote!.expiresAt);
       else engine.selectPiece(room, current.id, engine.chooseAiPiece(room, current.id)!);
     }
     assert.equal(room.status, 'FINISHED', `seed ${seed}`);
@@ -134,3 +135,4 @@ test('fifty seeded four-seat games finish with unique colours and valid piece pr
     assert.ok(room.game!.pieces.every((p) => p.progress >= -1 && p.progress <= FINISH_PROGRESS));
   }
 });
+import { advanceLifecycle } from '../src/game/MatchLifecycle.js';

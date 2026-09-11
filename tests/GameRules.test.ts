@@ -5,6 +5,7 @@ import { GameRules } from '../src/game/GameRules.js';
 import { getBoardCell } from '../src/game/PathData.js';
 import type { GameState, Piece } from '../src/protocol.js';
 import type { Room } from '../src/room/Room.js';
+import { voteContinue } from '../src/game/MatchLifecycle.js';
 
 const airportPiece = (overrides: Partial<Piece> = {}): Piece => ({
   id: 'red-1', playerId: 'p1', color: 'RED', state: 'AIRPORT', progress: -1, ...overrides
@@ -88,9 +89,12 @@ test('the first player with four completed planes wins the game immediately', ()
   room.game!.dice = 1;
   const result = engine.selectPiece(room, 'p1', 'red-4');
   assert.equal(result.playerFinished, true);
+  assert.equal(room.status, 'PLAYING');
+  assert.equal(room.game!.phase, 'WINNER_VOTE');
+  assert.deepEqual(room.game!.rankings, ['p1']);
+  voteContinue(room, 'p1', room.game!.lifecycle!.continueVote!.id, false);
   assert.equal(room.status, 'FINISHED');
   assert.equal(room.game!.phase, 'GAME_OVER');
-  assert.deepEqual(room.game!.rankings, ['p1']);
 });
 
 test('starting with two people fills AI seats and a forced six retains the current turn', () => {

@@ -48,7 +48,7 @@ export class RoomManager {
     if (spectator) room.spectators = room.spectators!.filter((player) => player.id !== playerId);
     if (room.status === 'PLAYING') {
       const player = room.players.find((candidate) => candidate.id === playerId);
-      if (player) { player.connected = false; player.aiControlled = true; player.disconnectedAt ??= Date.now(); }
+      if (player) { player.connected = false; if (!room.game?.lifecycle?.pause) player.aiControlled = true; player.disconnectedAt ??= Date.now(); }
       this.touch(room);
       return room;
     }
@@ -101,9 +101,9 @@ export class RoomManager {
     room.game = undefined;
     // AI seats belong to a single match. The next lobby should show only the
     // real players who can ready up, then refill empty seats at game start.
-    room.players = room.players.filter((player) => !player.isBot && player.connected && !player.aiControlled);
+    room.players = room.players.filter((player) => !player.isBot && player.connected);
     room.spectators = room.spectators?.filter((player) => player.connected);
-    room.players.forEach((player) => { player.ready = false; });
+    room.players.forEach((player) => { player.ready = false; player.aiControlled = false; });
     if (!roomMembers(room).some((player) => player.id === room.ownerId) && roomMembers(room)[0]) room.ownerId = roomMembers(room)[0].id;
     this.touch(room);
   }

@@ -48,7 +48,7 @@ try {
   assert.equal(roll.diceChoices.length, 2);
   const dieIndex = roll.diceChoices[1] > roll.diceChoices[0] ? 1 : 0;
   const preview = await request(a, 'RECONNECT', { roomId }, 'GAME_STATE');
-  assert.equal(preview.protocolVersion, 3);
+  assert.equal(preview.protocolVersion, 4);
   assert.equal(preview.phase, 'WAIT_SELECT_DIE');
   const option = preview.actionOptions.find((candidate) => candidate.dieIndex === dieIndex && candidate.kind === 'STANDARD');
   const pieceId = option.movablePieceIds[0];

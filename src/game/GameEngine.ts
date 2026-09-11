@@ -5,6 +5,7 @@ import { GameRules } from './GameRules.js';
 import { FINAL_PATH_START, MAIN_PATH_LENGTH, getBoardCell, getPieceCell, positionOnRing } from './PathData.js';
 import { assignColors } from '../room/ColorAssignment.js';
 import { captureGroup, carryPassengers, relocatePassengers } from './BoundPieces.js';
+import { beginWinnerVote } from './MatchLifecycle.js';
 import { actionSpecs, activeAtCell, beginNormalTurn, consumeAction, faction, initializeFactions, publicSkills, refreshAwakening, refreshStoredCharge } from './SkillState.js';
 
 const GAME_COLORS: PlayerColor[] = ['RED', 'YELLOW', 'BLUE', 'GREEN'];
@@ -209,8 +210,7 @@ export class GameEngine {
     // A complete squad wins immediately. The finished planes are rendered back
     // in their own airport with a distinct completion icon on the client.
     if (result.playerFinished) {
-      game.phase = 'GAME_OVER';
-      room.status = 'FINISHED';
+      beginWinnerVote(room);
       return result;
     }
 
@@ -368,6 +368,7 @@ export class GameEngine {
       movePreviews: game?.phase === 'WAIT_SELECT_PIECE' && game.dice !== null ? Object.fromEntries(game.movablePieceIds.map((id) => [id, this.previewAction(room, id, game.selectedAction ?? { dice: game.dice!, kind: 'STANDARD', extraTurn: game.dice === 6 })])) : {},
       skills: publicSkills(room),
       actionOptions: this.getActionOptions(room),
+      lifecycle: game?.lifecycle ? structuredClone(game.lifecycle) : undefined,
       reaction: game?.reaction ? { id: game.reaction.id, playerId: game.reaction.playerId, pieceIds: [...game.reaction.pieceIds], capacity: game.reaction.capacity, expiresAt: game.reaction.expiresAt, kind: game.reaction.kind, carrierId: game.reaction.carrierId } : undefined,
       rescuePieceIds: [...(game?.rescue?.pieceIds ?? [])], rolledTotal: game?.rolledTotal ?? 0, extraRolls: game?.extraRolls ?? 0
     };
@@ -429,6 +430,7 @@ export class GameEngine {
 
   private requireGame(room: Room): GameState {
     if (!room.game || room.status !== 'PLAYING') throw new GameError('INVALID_PHASE', '游戏尚未开始');
+    if (room.game.lifecycle?.pause) throw new GameError('INVALID_PHASE', '技术暂停中，请等待恢复');
     return room.game;
   }
 

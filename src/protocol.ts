@@ -2,8 +2,8 @@
 export type PlayerColor = 'RED' | 'YELLOW' | 'BLUE' | 'GREEN';
 export type PieceState = 'AIRPORT' | 'MAIN_PATH' | 'FINAL_PATH' | 'FINISHED';
 export type RoomStatus = 'WAITING' | 'PLAYING' | 'FINISHED';
-export const PROTOCOL_VERSION = 3;
-export type GamePhase = 'WAIT_ROLL' | 'WAIT_SELECT_DIE' | 'WAIT_SELECT_PIECE' | 'WAIT_REACTION' | 'RESOLVING_MOVE' | 'GAME_OVER';
+export const PROTOCOL_VERSION = 4;
+export type GamePhase = 'WAIT_ROLL' | 'WAIT_SELECT_DIE' | 'WAIT_SELECT_PIECE' | 'WAIT_REACTION' | 'WINNER_VOTE' | 'RESOLVING_MOVE' | 'GAME_OVER';
 export type DicePair = [number, number];
 export type RoomMode = 'PRIVATE' | 'MATCHMAKING';
 
@@ -19,7 +19,7 @@ export type ClientMessageType =
   | 'READY' | 'CANCEL_READY' | 'START_GAME' | 'SET_COLOR_PREFERENCE'
   | 'ROLL_DICE' | 'SELECT_DIE' | 'SELECT_PIECE' | 'COMMIT_MOVE' | 'USE_SKILL' | 'PING' | 'RECONNECT'
   | 'CALIBRATION_OPEN' | 'CALIBRATION_SAVE'
-  | 'SET_AI_TAKEOVER' | 'EXIT_GAME' | 'REJOIN_GAME';
+  | 'SET_AI_TAKEOVER' | 'EXIT_GAME' | 'REJOIN_GAME' | 'REQUEST_PAUSE' | 'VOTE_PAUSE' | 'VOTE_CONTINUE';
 
 export interface ServerMessage<T = unknown> {
   type: ServerMessageType;
@@ -36,7 +36,7 @@ export type ServerMessageType =
   | 'MOVE_RESULT' | 'SKILL_EFFECT' | 'GAME_STATE' | 'PLAYER_DISCONNECTED'
   | 'PLAYER_RECONNECTED' | 'GAME_OVER' | 'ERROR' | 'PONG'
   | 'BOARD_CALIBRATION_DATA' | 'BOARD_CALIBRATION_OPEN' | 'BOARD_CALIBRATION_SAVED'
-  | 'AI_TAKEOVER_CHANGED' | 'GAME_EXITED' | 'ACTIVE_GAMES';
+  | 'AI_TAKEOVER_CHANGED' | 'GAME_EXITED' | 'ACTIVE_GAMES' | 'SKILL_READY';
 
 export enum ErrorCode {
   INVALID_MESSAGE = 'INVALID_MESSAGE',
@@ -135,7 +135,21 @@ export interface GameState {
   rescue?: { playerId: string; pieceIds: string[] };
   reaction?: PendingResolution;
   effectSequence?: number;
+  lifecycle?: MatchLifecycleState;
 }
+
+export interface MatchVote {
+  id: number; initiatorId?: string; voterIds: string[]; votes: Record<string, boolean>;
+  required: number; expiresAt: number;
+}
+export interface MatchLifecycleState {
+  activity?: { playerId: string; key: string; deadline: number };
+  pauseVote?: MatchVote;
+  pause?: { startedAt: number; endsAt: number };
+  continueVote?: MatchVote;
+  continuationUsed?: boolean;
+}
+export interface SkillReadyNotice { playerId: string; skillIds: string[]; }
 
 export interface GameSnapshot {
   protocolVersion: number;
@@ -163,6 +177,7 @@ export interface GameSnapshot {
   rescuePieceIds?: string[];
   rolledTotal?: number;
   extraRolls?: number;
+  lifecycle?: MatchLifecycleState;
 }
 
 export interface ActionOption {
