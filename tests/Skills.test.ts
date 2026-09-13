@@ -34,6 +34,39 @@ test('L02: modified sixes never repeat, while an unmodified rolled six still doe
   }
 });
 
+test('L05: all routes capture jump triggers and destinations, never intervening cells', () => {
+  for (const color of colors) for (const start of [0, 12, 16]) {
+    const s = setup(color), enemy = color === 'BLUE' ? 'RED' : 'BLUE';
+    s.at(color, start);
+    const landing = start + 2;
+    const targets = start === 0 ? [2, 6, 4, 1] : start === 12 ? [14, 18, 30, 27] : [18, 30, 34, 27];
+    targets.forEach((p, i) => Object.assign(s.at(enemy, 1, i + 1), positionOnRing(enemy, getBoardCell(color, p)!)));
+    const rules = new GameRules(), move = rules.calculateMove(s.game, color, s.piece(color).id, 2);
+    assert.equal(move.segments[0].toProgress, landing);
+    assert.deepEqual(move.captures.map((c) => c.atProgress), targets.slice(0, start === 0 ? 2 : 3));
+    assert.deepEqual(rules.calculateMove(s.game, color, s.piece(color).id, 2, { noCapture: true }).captures, []);
+  }
+});
+
+test('L06: attacker can leave a locked French plane next turn, then France can unlock with 3 or 4', () => {
+  for (const attacker of ['RED', 'BLUE', 'GREEN'] as const) for (const dice of [3, 4]) {
+    const s = setup(attacker); s.at(attacker, 4);
+    Object.assign(s.at('YELLOW', 1), positionOnRing('YELLOW', getBoardCell(attacker, 5)!));
+    s.roll(1); s.commit('die-0', s.piece(attacker).id);
+    s.skill('fr-lock', { reactionId: s.game.reaction!.id, targetPieceIds: [s.piece('YELLOW').id] }, 'YELLOW');
+    assert.equal(s.piece('YELLOW').locked, true);
+    assert.equal(getPieceCell(s.piece(attacker)), getPieceCell(s.piece('YELLOW')));
+    s.turn('YELLOW'); s.roll(dice);
+    assert.ok(!s.engine.getActionOptions(s.room)[0].movablePieceIds.includes(s.piece('YELLOW').id));
+    s.turn(attacker); s.roll(2);
+    assert.ok(s.engine.getActionOptions(s.room)[0].movablePieceIds.includes(s.piece(attacker).id));
+    s.commit('die-0', s.piece(attacker).id);
+    s.turn('YELLOW'); s.roll(dice);
+    s.commit('die-0', s.piece('YELLOW').id);
+    assert.equal(s.piece('YELLOW').locked, false);
+  }
+});
+
 test('L03: China stores at most one charge after three unused turns; spending it preserves CD and limits the whole turn', () => {
   const s = setup('BLUE'); s.at('BLUE', 1);
   const state = faction(s.room, 'BLUE'); Object.assign(state, { awakened: true, level: 2 });

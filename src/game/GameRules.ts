@@ -80,10 +80,11 @@ export class GameRules {
     }
 
     const reachedFinish = progress === FINISH_PROGRESS;
-    // The wormhole only touches its two endpoints. Ordinary cells under the
-    // flight arc never collide. A remaining jump can also capture at its landing.
-    const flight = segments.find((segment) => segment.kind === 'FLIGHT');
-    const collisionProgresses = options.noCapture || dice === 0 ? [] : Array.from(new Set(flight ? [flight.fromProgress, flight.toProgress, progress] : [progress]));
+    // Special moves touch both endpoints, in travel order. Neither walking
+    // through a cell nor flying/jumping over it constitutes a landing.
+    const landings = segments.flatMap((segment) => segment.kind === 'JUMP' || segment.kind === 'FLIGHT'
+      ? [segment.fromProgress, segment.toProgress] : [segment.toProgress]);
+    const collisionProgresses = options.noCapture || dice === 0 ? [] : Array.from(new Set(landings));
     const captures = collisionProgresses.flatMap((atProgress) => this.findCollisions(game, piece, [atProgress]).map((pieceId) => ({ pieceId, atProgress })));
     const killedPieceIds = captureGroup(game, captures.map((capture) => capture.pieceId));
     for (const id of killedPieceIds) if (!captures.some((c) => c.pieceId === id)) {

@@ -72,5 +72,13 @@ const output = new URL('../../SkillLudo_Client/docs/verification/', import.meta.
   const move = s.engine.commitMove(s.room, 'GREEN', { roomId: s.room.roomId, rollId: s.game.rollId, optionId: 'die-0', pieceId: carrier.id }).move;
   fixtures.push({ name: 'checkpoint', playerId: 'GREEN', snapshot, move, after: s.engine.getSnapshot(s.room) });
 }
+for (const color of ['RED', 'BLUE', 'GREEN'] as const) {
+  const s = setup(color), id = `${color.toLowerCase()}-1`;
+  s.at(id, 5);
+  Object.assign(s.at('yellow-1', 1), positionOnRing('YELLOW', getPieceCell(s.piece(id))!), { locked: true });
+  s.engine.rollDice(s.room, color, 2);
+  const snapshot = s.engine.getSnapshot(s.room);
+  fixtures.push({ name: `locked-stack-${color}`, playerId: color, snapshot, after: snapshot });
+}
 mkdirSync(output, { recursive: true }); writeFileSync(new URL('skill-fixtures.json', output), JSON.stringify(fixtures, null, 2));
 console.log(`Exported ${fixtures.length} skill presentation fixtures.`);
