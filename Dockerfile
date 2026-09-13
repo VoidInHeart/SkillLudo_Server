@@ -15,7 +15,7 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json ./
 COPY --chown=node:node config ./config
-COPY --chown=node:node scripts/smoke.mjs scripts/load-test.mjs ./scripts/
+COPY --chown=node:node scripts/smoke.mjs scripts/load-test.mjs scripts/verify-smtp.mjs ./scripts/
 USER node
 EXPOSE 3000
 CMD ["node", "--max-old-space-size=512", "dist/index.js"]

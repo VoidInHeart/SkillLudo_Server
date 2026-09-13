@@ -7,5 +7,6 @@
 !scripts/
 !scripts/smoke.mjs
 !scripts/load-test.mjs
+!scripts/verify-smtp.mjs
 !config/
 !config/board-positions.json
