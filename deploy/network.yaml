@@ -32,6 +32,10 @@ spec:
         - {protocol: TCP, port: 3000}
   egress:
     - to:
+        - ipBlock: {cidr: 0.0.0.0/0}
+      ports:
+        - {protocol: TCP, port: 465}
+    - to:
         - podSelector:
             matchLabels: {app: skillludo-mysql}
       ports:

@@ -13,6 +13,7 @@ import { ConnectionManager } from './ConnectionManager.js';
 import { advanceLifecycle, LifecycleError, requestPause, synchronizeActivity, voteContinue, votePause } from '../game/MatchLifecycle.js';
 import { SkillAnnouncements } from '../game/SkillAnnouncements.js';
 import { FACTION_NAMES, SKILL_CATALOG } from '../game/SkillCatalog.js';
+import { SubmissionError, type SubmissionService } from '../submissions/SubmissionService.js';
 
 interface ConnectionContext {
   session?: Session;
@@ -45,7 +46,7 @@ export class GameWebSocketServer {
   // authoritative and refuses forced rolls in a production deployment.
   private readonly allowDebugDice = process.env.NODE_ENV !== 'production' && process.env.SKILLLUDO_ALLOW_DEBUG_DICE !== 'false';
 
-  public constructor(port: number, private readonly sessions = new SessionManager(), readiness: () => Promise<void> = async () => {}) {
+  public constructor(port: number, private readonly sessions = new SessionManager(), readiness: () => Promise<void> = async () => {}, private readonly submissions?: SubmissionService) {
     this.http = createServer((request, response) => { void this.health(request, response, readiness); });
     this.http.requestTimeout = 10_000;
     this.http.headersTimeout = 10_000;
@@ -134,6 +135,16 @@ export class GameWebSocketServer {
         return;
       }
       if (!context.session) throw new GameError('UNAUTHORIZED');
+      if (message.type === 'SUBMIT_CREATION') {
+        try {
+          if (!this.submissions) throw new SubmissionError('投稿服务暂未开放，请稍后提交');
+          const result = await this.submissions.submit(context.session, message.data);
+          this.send(socket, 'SUBMISSION_RESULT', result, message.requestId);
+        } catch (error) {
+          this.send(socket, 'SUBMISSION_RESULT', { status: 'ERROR', message: error instanceof SubmissionError ? error.message : '投稿暂时无法处理，草稿仍保留，请稍后重试' }, message.requestId);
+        }
+        return;
+      }
       this.handleAuthenticated(socket, context.session, message);
     } catch (error) {
       this.sendError(socket, error);

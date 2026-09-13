@@ -15,7 +15,7 @@ export interface ClientMessage<T = unknown> {
 
 export type ClientMessageType =
   | 'AUTH' | 'REGISTER' | 'LOGIN' | 'CREATE_ROOM' | 'JOIN_ROOM' | 'LEAVE_ROOM'
-  | 'QUICK_MATCH' | 'CHAT_SEND'
+  | 'QUICK_MATCH' | 'CHAT_SEND' | 'SUBMIT_CREATION'
   | 'READY' | 'CANCEL_READY' | 'START_GAME' | 'SET_COLOR_PREFERENCE'
   | 'ROLL_DICE' | 'SELECT_DIE' | 'SELECT_PIECE' | 'COMMIT_MOVE' | 'USE_SKILL' | 'PING' | 'RECONNECT'
   | 'CALIBRATION_OPEN' | 'CALIBRATION_SAVE'
@@ -29,7 +29,7 @@ export interface ServerMessage<T = unknown> {
 }
 
 export type ServerMessageType =
-  | 'AUTH_OK' | 'ROOM_CREATED' | 'ROOM_STATE'
+  | 'AUTH_OK' | 'ROOM_CREATED' | 'ROOM_STATE' | 'SUBMISSION_RESULT'
   | 'PLAYER_JOINED' | 'PLAYER_LEFT' | 'PLAYER_READY_CHANGED'
   | 'CHAT_MESSAGE' | 'CHAT_HISTORY' | 'SYSTEM_MESSAGE'
   | 'GAME_START' | 'TURN_START' | 'DICE_RESULT' | 'DIE_SELECTED' | 'MOVABLE_PIECES'

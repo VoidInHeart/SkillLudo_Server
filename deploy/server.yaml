@@ -43,6 +43,9 @@ spec:
           ports:
             - {name: websocket, containerPort: 3000}
           env:
+            - name: SMTP_AUTH_CODE
+              valueFrom:
+                secretKeyRef: {name: smtp-credentials, key: SMTP_AUTH_CODE, optional: true}
             - {name: SKILLLUDO_DB_HOST, value: mysql}
             - {name: SKILLLUDO_DB_NAME, value: skill_ludo}
             - {name: SKILLLUDO_DB_USER, value: skillludo_app}

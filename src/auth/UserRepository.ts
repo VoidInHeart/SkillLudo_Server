@@ -59,6 +59,8 @@ export class UserRepository {
     await this.pool.query('SELECT 1');
   }
 
+  public get database(): Pool { return this.pool; }
+
   public async close(): Promise<void> {
     await this.pool.end();
   }

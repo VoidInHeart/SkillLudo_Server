@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: VoidInHeart/SkillLudo_Client
-          ref: e174337b12d6260b42e6f8ac5f80acfd4e794cdd
+          ref: d1be5984990a4d2e31aa4d9fe526c69aec584fe4
           path: SkillLudo_Client
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -80,6 +80,7 @@ jobs:
           done
           node scripts/smoke.mjs
           node scripts/auth-benchmark.mjs
+          node scripts/submission-integration.mjs
       - name: Build immutable release image
         working-directory: SkillLudo_Server
         run: |

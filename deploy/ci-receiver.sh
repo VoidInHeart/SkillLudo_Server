@@ -46,7 +46,20 @@ rollback() {
   kubectl -n skillludo set image deployment/server "server=$previous"
   kubectl -n skillludo rollout status deployment/server --timeout=180s
 }
-kubectl -n skillludo set image deployment/server "server=$image"
+# Apply the image and optional runtime SMTP reference in one rollout. The
+# authorization code stays in the cluster Secret, outside CI and the image.
+patch=$(python3 - "$image" <<'PY'
+import json, sys
+print(json.dumps({"spec": {"template": {"spec": {"containers": [{
+    "name": "server", "image": sys.argv[1], "env": [{
+        "name": "SMTP_AUTH_CODE", "valueFrom": {"secretKeyRef": {
+            "name": "smtp-credentials", "key": "SMTP_AUTH_CODE", "optional": True
+        }}
+    }]
+}]}}}}))
+PY
+)
+kubectl -n skillludo patch deployment server --type strategic -p "$patch"
 if ! kubectl -n skillludo rollout status deployment/server --timeout=180s; then rollback; exit 1; fi
 if ! kubectl -n skillludo exec deployment/server -- env "EXPECTED_REVISION=$revision" node scripts/smoke.mjs; then rollback; exit 1; fi
 printf '%s\n' "$previous" > /opt/skillludo/releases/previous-image

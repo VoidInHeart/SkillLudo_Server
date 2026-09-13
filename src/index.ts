@@ -1,11 +1,15 @@
 import { GameWebSocketServer } from './network/WebSocketServer.js';
 import { SessionManager } from './auth/SessionManager.js';
 import { UserRepository } from './auth/UserRepository.js';
+import { SubmissionService } from './submissions/SubmissionService.js';
+import { SubmissionRepository } from './submissions/SubmissionRepository.js';
+import { createSubmissionMailer } from './submissions/SubmissionMailer.js';
 
 const configuredPort = Number.parseInt(process.env.PORT ?? '3000', 10);
 const users = new UserRepository();
 await users.verifyConnection();
-const server = new GameWebSocketServer(Number.isFinite(configuredPort) ? configuredPort : 3000, new SessionManager(users), () => users.verifyConnection());
+const submissions = new SubmissionService(new SubmissionRepository(users.database), createSubmissionMailer());
+const server = new GameWebSocketServer(Number.isFinite(configuredPort) ? configuredPort : 3000, new SessionManager(users), () => users.verifyConnection(), submissions);
 await server.ready;
 console.info(`SkillLudo server listening on ${server.address()}`);
 

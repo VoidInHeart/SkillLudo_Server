@@ -1,4 +1,5 @@
 import mysql from 'mysql2/promise';
+import { readFileSync } from 'node:fs';
 
 const database = process.env.SKILLLUDO_DB_NAME ?? 'skill_ludo';
 const appUser = process.env.SKILLLUDO_DB_USER ?? 'skillludo_app';
@@ -65,6 +66,8 @@ try {
       INDEX idx_game_records_finished (finished_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
+  await root.query(`USE ${schema}`);
+  await root.query(readFileSync(new URL('../deploy/submissions.sql', import.meta.url), 'utf8'));
   console.info(`MySQL initialized: ${database}; application user: ${appUser}`);
 } finally {
   await root.end();
